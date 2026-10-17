@@ -148,7 +148,7 @@
   <header>
     <span class="logo">FLOW</span>
     <input class="title" id="title" value="Без назви" spellcheck="false">
-    <span class="ver" id="ver" title="версія збірки">v—</span>
+    <span class="ver" id="ver" title="версія збірки">v0.8</span>
     <span class="t" id="hdur">0.0 с</span>
     <button class="ibtn" id="undo" title="Скасувати">↶</button>
     <button class="ibtn" id="redo" title="Повторити">↷</button>
@@ -394,11 +394,12 @@ reg("title", {
   name: "Заголовок", group: "Текст",
   def: { text: "Ти вже у Потоці", size: 92, weight: 300, spacing: 0.01, lineHeight: 1.12, upper: 0,
          font: "sans", color: "#ffffff", shadow: 40, align: "center", animIn: "rise", animOut: "fade",
+         dist: 46, blurIn: 10,
          x: 50, y: 42, w: 84, h: 26, alpha: 1, speed: 1, rot: 0, blur: 0, dur: 4, anim: 4 },
   sections: [
     ["Текст", ["text", "font", "size", "weight", "lineHeight", "spacing", "upper", "align"]],
     ["Вигляд", ["color", "shadow"]],
-    ["Поява", ["animIn", "animOut", "speed"]]
+    ["Поява", ["animIn", "animOut", "dist", "blurIn", "speed"]]
   ],
   node(it) {
     const fam = it.font === "serif" ? 'Georgia,"Times New Roman",serif'
@@ -412,7 +413,7 @@ reg("title", {
   },
   anims(it) {
     const inKf = {
-      rise: [{ opacity: 0, transform: "translateY(46px)", filter: "blur(10px)" },
+      rise: [{ opacity: 0, transform: `translateY(${it.dist}px)`, filter: `blur(${it.blurIn}px)` },
              { opacity: 1, transform: "translateY(0)", filter: "blur(0px)" }],
       fade: [{ opacity: 0 }, { opacity: 1 }],
       blur: [{ opacity: 0, filter: "blur(22px)" }, { opacity: 1, filter: "blur(0px)" }],
@@ -464,22 +465,23 @@ reg("subtitle", {
 /* ---------- СВІТЛО ---------- */
 reg("glow", {
   name: "Сяйво", group: "Світло",
-  def: { color: "#7fd6ff", color2: "#2a4cff", soft: 140, pulse: .22, pulseSpeed: 1,
+  def: { color: "#7fd6ff", color2: "#2a4cff", soft: 140, core: .62, halo: .2, mid: 42, edge: 72,
+         grow: 1.08, pulse: .22, pulseSpeed: 1,
          x: 50, y: 45, w: 70, h: 70, alpha: .7, speed: 1, rot: 0, blur: 0, dur: 6, anim: 6 },
   sections: [
-    ["Світло", ["color", "color2", "soft", "pulse", "pulseSpeed"]],
+    ["Світло", ["color", "color2", "soft", "core", "halo", "mid", "edge", "grow", "pulse", "pulseSpeed"]],
     ["Розмір", ["x", "y", "w", "h", "alpha"]]
   ],
   node(it) {
     return `<div style="width:100%;height:100%;
-      background:radial-gradient(circle at 50% 50%,${hexA(it.color, .62)} 0%,${hexA(it.color2, .2)} 42%,transparent 72%);
+      background:radial-gradient(circle at 50% 50%,${hexA(it.color, it.core)} 0%,${hexA(it.color2, it.halo)} ${it.mid}%,transparent ${it.edge}%);
       filter:blur(${it.soft}px)"></div>`;
   },
   anims(it) {
     const d = Math.max(0, it.pulse) * .45;
     return [{ sel: "div", loop: true, kf: [
       { transform: "scale(1)", opacity: 1 - d },
-      { transform: "scale(1.08)", opacity: 1 },
+      { transform: `scale(${it.grow})`, opacity: 1 },
       { transform: "scale(1)", opacity: 1 - d }
     ], opt: { duration: 5200 / it.pulseSpeed, easing: "ease-in-out" } }];
   }
@@ -487,10 +489,10 @@ reg("glow", {
 
 reg("rays", {
   name: "Промені", group: "Світло",
-  def: { color: "#8fd0ff", color2: "#c9a6ff", beams: 9, inner: 18, soft: 6, spin: 46,
+  def: { color: "#8fd0ff", color2: "#c9a6ff", beams: 9, inner: 18, beam: .55, maskMid: 30, maskOut: 70, soft: 6, spin: 46,
          x: 50, y: 58, w: 120, h: 120, alpha: .28, speed: 1, rot: 0, blur: 0, dur: 8, anim: 8 },
   sections: [
-    ["Промені", ["beams", "inner", "soft", "spin"]],
+    ["Промені", ["beams", "inner", "beam", "maskMid", "maskOut", "soft", "spin"]],
     ["Колір", ["color", "color2"]],
     ["Розмір", ["x", "y", "w", "alpha"]]
   ],
@@ -500,13 +502,13 @@ reg("rays", {
     for (let i = 0; i < n; i++) {
       const a = (i / n) * 100;
       stops.push(`transparent ${(a).toFixed(1)}%`);
-      stops.push(`${hexA(i % 2 ? it.color2 : it.color, .55)} ${(a + 100 / n / 3).toFixed(1)}%`);
+      stops.push(`${hexA(i % 2 ? it.color2 : it.color, it.beam)} ${(a + 100 / n / 3).toFixed(1)}%`);
       stops.push(`transparent ${(a + 100 / n / 1.7).toFixed(1)}%`);
     }
     return `<div style="width:100%;height:100%;border-radius:50%;
       background:conic-gradient(from 0deg,${stops.join(",")});
-      -webkit-mask-image:radial-gradient(circle,transparent ${Math.round(it.inner * .4)}%,#000 ${it.inner + 12}%,transparent ${Math.min(88, it.inner + 52)}%);
-      mask-image:radial-gradient(circle,transparent ${Math.round(it.inner * .4)}%,#000 ${it.inner + 12}%,transparent ${Math.min(88, it.inner + 52)}%);
+      -webkit-mask-image:radial-gradient(circle,transparent ${Math.round(it.inner * .4)}%,#000 ${it.maskMid}%,transparent ${it.maskOut}%);
+      mask-image:radial-gradient(circle,transparent ${Math.round(it.inner * .4)}%,#000 ${it.maskMid}%,transparent ${it.maskOut}%);
       filter:blur(${it.soft}px)"></div>`;
   },
   anims(it) {
@@ -530,10 +532,10 @@ reg("vignette", {
 /* ---------- ЧАСТИНКИ ---------- */
 reg("particles", {
   name: "Частинки", group: "Рух",
-  def: { color: "#9fe8ff", count: 46, size: 1, rise: 280, spread: 1, twinkle: 0, speed: 1,
+  def: { color: "#9fe8ff", count: 46, size: 1, glow: 6, rise: 280, spread: 1, twinkle: 0, speed: 1,
          x: 50, y: 50, w: 100, h: 100, alpha: .85, rot: 0, blur: 0, dur: 10, anim: 10 },
   sections: [
-    ["Частинки", ["count", "size", "rise", "spread", "twinkle", "speed"]],
+    ["Частинки", ["count", "size", "glow", "rise", "spread", "twinkle", "speed"]],
     ["Колір", ["color"]],
     ["Розмір", ["x", "y", "w", "alpha"]]
   ],
@@ -544,7 +546,7 @@ reg("particles", {
       const s = (1 + R() * 3.2) * sz;
       out += `<i style="position:absolute;left:${(R() * 100).toFixed(2)}%;top:${(R() * 100).toFixed(2)}%;
         width:${s}px;height:${s}px;border-radius:50%;background:${it.color};opacity:${(.25 + R() * .75).toFixed(2)};
-        box-shadow:0 0 6px ${hexA(it.color, .8)}"></i>`;
+        box-shadow:0 0 ${it.glow}px ${hexA(it.color, .8)}"></i>`;
     }
     return `<div style="width:100%;height:100%;position:relative">${out}</div>`;
   },
@@ -650,10 +652,10 @@ reg("line", {
 /* ---------- ОБРАЗИ ШЛЯХУ ---------- */
 reg("vortex", {
   name: "Вихор", group: "Образи",
-  def: { color: "#56c8c4", color2: "#7fd6ff", arms: 3, sharp: 34, soft: 4, spin: 9, dir: 1,
+  def: { color: "#56c8c4", color2: "#7fd6ff", arms: 3, sharp: 34, arm: .8, maskMid: 42, maskOut: 74, soft: 4, spin: 9, dir: 1,
          x: 50, y: 45, w: 62, h: 62, alpha: .9, speed: 1, rot: 0, blur: 0, dur: 8, anim: 8 },
   sections: [
-    ["Вихор", ["arms", "sharp", "soft", "spin", "dir"]],
+    ["Вихор", ["arms", "sharp", "arm", "maskMid", "maskOut", "soft", "spin", "dir"]],
     ["Колір", ["color", "color2"]],
     ["Розмір", ["x", "y", "w", "alpha"]]
   ],
@@ -662,13 +664,13 @@ reg("vortex", {
     for (let i = 0; i < a; i++) {
       const s = (i / a) * 100, w = 100 / a;
       stops.push(`transparent ${s.toFixed(1)}%`);
-      stops.push(`${hexA(it.color, .8)} ${(s + w * it.sharp / 100).toFixed(1)}%`);
+      stops.push(`${hexA(it.color, it.arm)} ${(s + w * it.sharp / 100).toFixed(1)}%`);
       stops.push(`transparent ${(s + w * .8).toFixed(1)}%`);
     }
     return `<div style="width:100%;height:100%;border-radius:50%;
       background:conic-gradient(from 0deg,${stops.join(",")});
-      -webkit-mask-image:radial-gradient(circle,transparent 10%,#000 42%,transparent 74%);
-      mask-image:radial-gradient(circle,transparent 10%,#000 42%,transparent 74%);
+      -webkit-mask-image:radial-gradient(circle,transparent 10%,#000 ${it.maskMid}%,transparent ${it.maskOut}%);
+      mask-image:radial-gradient(circle,transparent 10%,#000 ${it.maskMid}%,transparent ${it.maskOut}%);
       filter:blur(${it.soft}px)"></div>`;
   },
   anims(it) {
@@ -702,9 +704,10 @@ reg("rings", {
 
 reg("nebula", {
   name: "Туманність", group: "Образи",
-  def: { color: "#8a5cff", color2: "#2f7dff", blobs: 4, soft: 38, drift: 12, speed: 1,
+  def: { color: "#8a5cff", color2: "#2f7dff", blobs: 4, core: .55, halo: .12, mid: 55, edge: 72,
+         grow: 1.12, soft: 38, drift: 12, speed: 1,
          x: 50, y: 40, w: 90, h: 70, alpha: .55, rot: 0, blur: 0, dur: 12, anim: 12 },
-  sections: [["Туманність", ["blobs", "soft", "drift", "speed"]], ["Колір", ["color", "color2"]], ["Розмір", ["x", "y", "w", "h", "alpha"]]],
+  sections: [["Туманність", ["blobs", "core", "halo", "mid", "edge", "grow", "soft", "drift", "speed"]], ["Колір", ["color", "color2"]], ["Розмір", ["x", "y", "w", "h", "alpha"]]],
   node(it) {
     const R = seeded(it.id + "nb"), n = Math.max(1, Math.round(it.blobs));
     let out = "";
@@ -713,14 +716,14 @@ reg("nebula", {
       const col = i % 2 ? it.color2 : it.color;
       out += `<b style="position:absolute;left:${cx - s / 2}%;top:${cy - s / 2}%;width:${s}%;height:${s * 1.2}%;
         border-radius:50%;filter:blur(${it.soft}px);
-        background:radial-gradient(circle,${hexA(col, .55)} 0%,${hexA(col, .12)} 55%,transparent 72%)"></b>`;
+        background:radial-gradient(circle,${hexA(col, it.core)} 0%,${hexA(col, it.halo)} ${it.mid}%,transparent ${it.edge}%)"></b>`;
     }
     return out;
   },
   anims(it) {
     return [{ sel: "b", each: true, loop: true, kf: [
       { transform: "translate(0,0) scale(1)", opacity: .7 },
-      { transform: `translate(${it.drift}px,${-it.drift}px) scale(1.12)`, opacity: 1 },
+      { transform: `translate(${it.drift}px,${-it.drift}px) scale(${it.grow})`, opacity: 1 },
       { transform: "translate(0,0) scale(1)", opacity: .7 }
     ], opt: { duration: Math.max(3000, 11000 / it.speed), easing: "ease-in-out" } }];
   },
@@ -976,7 +979,7 @@ function renderTimeline() {
   $("#tlInfo").textContent = doc.items.length + " ел. · " + doc.tracks.length + " дор. · " + total.toFixed(1) + "с";
   $("#hdur").textContent = doc.meta.duration.toFixed(1) + " с";
   const v = $("#ver");
-  if (v && v.dataset.set !== "1") { v.textContent = "v" + ("0.7").toString(); v.dataset.set = "1"; }
+  if (v && v.dataset.set !== "1") { v.textContent = "v" + ("0.8").toString(); v.dataset.set = "1"; }
   $("#playhead").style.left = (TL_X0 + playhead * dpps) + "px";
 }
 
@@ -1100,7 +1103,10 @@ const LABEL = {
   spin: "Обертів/с", strength: "Сила", rise: "Підйом, px", spread: "Розкид", twinkle: "Мерехтіння",
   drift: "Дрейф, px", arms: "Рукавів", sharp: "Різкість", expand: "Розширення", blobs: "Плям",
   thick: "Товщина, px", glow: "Світіння, px", intensity: "Інтенсивність", px: "Зерно, px",
-  arm: "Довжина перекладини", armPos: "Позиція перекладини", css: "Свій CSS"
+  arm: "Довжина перекладини", armPos: "Позиція перекладини", css: "Свій CSS",
+  core: "Ядро", halo: "Ореол", mid: "Середина, %", edge: "Край, %", grow: "Ріст",
+  beam: "Яскравість променя", maskMid: "Маска: центр, %", maskOut: "Маска: край, %",
+  dist: "Дистанція появи, px", blurIn: "Розмиття входу, px"
 };
 const RANGE = {
   x: [0, 100, .5], y: [0, 100, .5], w: [1, 300, .5], h: [1, 300, .5], alpha: [0, 1, .02],
@@ -1111,7 +1117,10 @@ const RANGE = {
   inner: [0, 80, 1], spin: [.5, 60, .5], strength: [0, 1, .02], rise: [20, 800, 10],
   spread: [0, 3, .05], drift: [0, 90, 1], arms: [2, 8, 1], sharp: [5, 95, 1],
   expand: [1, 4, .05], blobs: [1, 8, 1], thick: [1, 20, .5], glow: [0, 60, 1],
-  intensity: [0, 1, .02], px: [1, 8, .5], arm: [20, 100, 1], armPos: [5, 60, 1]
+  intensity: [0, 1, .02], px: [1, 8, .5], arm: [20, 100, 1], armPos: [5, 60, 1],
+  core: [0, 1, .02], halo: [0, 1, .02], mid: [10, 80, 1], edge: [30, 100, 1], grow: [1, 1.6, .02],
+  beam: [0, 1, .02], maskMid: [5, 70, 1], maskOut: [30, 100, 1],
+  dist: [0, 200, 2], blurIn: [0, 40, 1]
 };
 const SEL = {
   align: [["center", "по центру"], ["left", "ліво"], ["right", "право"]],
@@ -1136,9 +1145,9 @@ function paintInspector() {
   }
   const p = REG[it.type];
   const used = new Set();
-  const secs = [["Час", ["start", "dur", "speed"]],
-                ...(p.sections || [["Параметри", p.fields || Object.keys(p.def)]]),
+  const secs = [...(p.sections || [["Параметри", p.fields || Object.keys(p.def)]]),
                 ["Положення", ["x", "y", "w", "h", "rot", "blur", "alpha"]],
+                ["Час", ["start", "dur", "speed"]],
                 ["Свій CSS (тонко)", ["css"]]];
   const body = secs.map(([title, keys]) => {
     const ks = keys.filter(k => { if (used.has(k)) return false; used.add(k); return true; });
