@@ -105,6 +105,13 @@
   .clip .nm{position:absolute;left:6px;top:5px;right:14px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .clip .du{display:none}
   .clip .grip{position:absolute;right:0;top:0;width:12px;height:100%;cursor:ew-resize;background:linear-gradient(90deg,transparent,rgba(255,255,255,.16))}
+  .arow .tname{color:#ffcf94}
+  .aclip{position:absolute;top:3px;height:26px;border-radius:7px;overflow:hidden;cursor:grab;touch-action:none;
+    background:rgba(255,180,106,.13);border:1px solid rgba(255,180,106,.45)}
+  .aclip.sel{border-color:#ffb46a;box-shadow:0 0 0 1px #ffb46a inset}
+  .aclip .wav{position:absolute;inset:0;width:100%;height:100%;opacity:.85;pointer-events:none}
+  .aclip span{position:absolute;left:5px;top:4px;font-size:9.5px;color:#ffe6c8;text-shadow:0 1px 3px #000;pointer-events:none}
+  .aclip .grip{position:absolute;right:0;top:0;width:12px;height:100%;cursor:ew-resize;background:linear-gradient(90deg,transparent,rgba(255,255,255,.2))}
   .playhead{position:absolute;top:0;bottom:0;width:2px;background:var(--acc2);pointer-events:none;box-shadow:0 0 8px var(--acc2)}
   .playhead::before{content:"";position:absolute;top:0;left:-5px;border-left:6px solid transparent;
     border-right:6px solid transparent;border-top:7px solid var(--acc2)}
@@ -180,6 +187,8 @@
     <div style="display:flex;gap:8px;padding:6px 10px;border-top:1px solid var(--line)">
       <button class="ibtn" id="dupBtn">⧉ Дубль</button>
       <button class="ibtn" id="splitBtn">✂ Різати</button>
+      <button class="ibtn" id="addAudioBtn">♪ Звук</button>
+      <input type="file" id="audioFile" accept="audio/*" hidden>
       <button class="ibtn" id="delBtn">🗑 Видалити</button>
       <span style="flex:1"></span>
       <button class="ibtn" id="fitBtn">Увесь</button>
@@ -252,7 +261,8 @@ function newDoc() {
     version: VERSION,
     meta: { title: "Без назви", w: W, h: H, fps: 30, duration: 20, bg: "#05060d" },
     tracks: [{ id: "v1", name: "Фон" }, { id: "v2", name: "Ефекти" }, { id: "v3", name: "Текст" }],
-    items: []
+    items: [],
+    audio: []
   };
 }
 function load() {
@@ -262,6 +272,7 @@ function load() {
     const d = JSON.parse(raw);
     if (!d || d.version !== VERSION) return null;            // тут буде migrate()
     if (!Array.isArray(d.items)) d.items = [];
+    if (!Array.isArray(d.audio)) d.audio = [];
     if (!Array.isArray(d.tracks) || !d.tracks.length) d.tracks = [{ id: "v1", name: "Сцена" }];
     d.meta = Object.assign(newDoc().meta, d.meta || {});
     return d;                                        // санітизація — у boot(), коли REG уже є
@@ -327,7 +338,23 @@ function normItem(raw, defTrack) {
   if ("weight" in d) it.weight = [200, 300, 400, 600, 800].includes(+it.weight) ? +it.weight : (d.weight || 300);
   return it;
 }
+function sanitizeAudio(d) {
+  const out = [];
+  for (const a of (Array.isArray(d.audio) ? d.audio : []).slice(0, 8)) {
+    if (!a || typeof a.src !== "string" || !/^\/media\/[A-Za-z0-9._-]+$/.test(a.src)) continue;
+    out.push({
+      id: safeId(a.id), name: String(a.name || "звук").slice(0, 60), src: a.src,
+      start: safeNum(a.start, 0, [0, 3600]), dur: safeNum(a.dur, 1, [.1, 3600]),
+      offset: safeNum(a.offset, 0, [0, 3600]), gain: safeNum(a.gain, 1, [0, 2]),
+      fadeIn: safeNum(a.fadeIn, 0, [0, 60]), fadeOut: safeNum(a.fadeOut, 0, [0, 60]),
+      peaks: Array.isArray(a.peaks) ? a.peaks.slice(0, 400).map(v => safeNum(v, 0, [0, 1])) : []
+    });
+  }
+  d.audio = out;
+}
+
 function sanitizeDoc(d) {
+  sanitizeAudio(d);
   const out = [];
   const t0 = (d.tracks && d.tracks[0] && d.tracks[0].id) || "v1";
   let dropped = 0;
@@ -912,7 +939,7 @@ function renderTimeline() {
 
   // доріжки: згори — верхній шар
   const rows = [...doc.tracks].reverse();
-  $("#track").innerHTML = rows.map(t => {
+  const tracksHtml = rows.map(t => {
     const clips = doc.items.filter(i => (i.track || doc.tracks[0].id) === t.id);
     return `<div class="trow" data-track="${esc(t.id)}" style="height:${ROW_H}px">
       <div class="tname ${t.id === activeTrack ? "on" : ""}" data-act="${esc(t.id)}">${esc(t.name)}</div>
@@ -927,6 +954,16 @@ function renderTimeline() {
     </div>`;
   }).join("");
 
+  const audioHtml = `<div class="trow arow" data-track="__audio" style="height:${ROW_H}px">
+      <div class="tname">Звук</div>
+      ${doc.audio.map(a => `<div class="aclip ${a.id === sel ? "sel" : ""}" data-aid="${esc(a.id)}"
+        style="left:${TL_X0 + a.start * dpps}px;width:${Math.max(18, a.dur * dpps)}px">
+        <canvas class="wav" width="400" height="40"></canvas><span>${esc(a.name)}</span>
+        <i class="grip" data-agrip="${esc(a.id)}"></i></div>`).join("")}
+    </div>`;
+  $("#track").innerHTML = tracksHtml + audioHtml;
+  drawWaves();
+
   $("#tlInfo").textContent = doc.items.length + " ел. · " + doc.tracks.length + " дор. · " + total.toFixed(1) + "с";
   $("#hdur").textContent = doc.meta.duration.toFixed(1) + " с";
   $("#playhead").style.left = (TL_X0 + playhead * dpps) + "px";
@@ -935,6 +972,7 @@ function renderTimeline() {
 function seek(t) {
   playhead = clamp(t, 0, Math.max(doc.meta.duration, timelineEnd()));
   applyTime(playhead);
+  syncAudio(playhead, playing);
   const sc = $("#tlScroll"), x = TL_X0 + playhead * dpps;
   if (x < sc.scrollLeft + 20 || x > sc.scrollLeft + sc.clientWidth - 40) sc.scrollLeft = Math.max(0, x - sc.clientWidth * .4);
 }
@@ -944,6 +982,17 @@ let drag = null;
 $("#track").addEventListener("pointerdown", e => {
   const name = e.target.closest("[data-act]");
   if (name) { activeTrack = name.dataset.act; renderTimeline(); e.preventDefault(); return; }
+  const aclip = e.target.closest(".aclip");
+  if (aclip) {
+    const a = doc.audio.find(x => x.id === aclip.dataset.aid);
+    if (!a) return;
+    sel = a.id; paintInspector(); renderTimeline();
+    drag = { kind: "audio", id: a.id, mode: e.target.classList.contains("grip") ? "trim" : "move",
+             x0: e.clientX, s0: a.start, d0: a.dur, snap: snapshot(), moved: false };
+    try { aclip.setPointerCapture(e.pointerId); } catch (err) {}
+    e.preventDefault();
+    return;
+  }
   const clip = e.target.closest(".clip");
   if (!clip) {
     const rect = $("#tlInner").getBoundingClientRect();
@@ -963,6 +1012,14 @@ window.addEventListener("pointermove", e => {
   if (!drag) return;
   const dx = (e.clientX - drag.x0) / dpps, dy = e.clientY - drag.y0;
   if (Math.abs(dx) > .02 || Math.abs(dy) > 4) drag.moved = true;
+  if (drag.kind === "audio") {
+    const a = doc.audio.find(x => x.id === drag.id);
+    if (!a) return;
+    if (drag.mode === "move") a.start = Math.max(0, Math.round((drag.s0 + dx) * 10) / 10);
+    else a.dur = Math.max(.3, Math.round((drag.d0 + dx) * 10) / 10);
+    renderTimeline(); syncAudio(playhead, playing);
+    return;
+  }
   const it = doc.items.find(i => i.id === drag.id);
   if (!it) return;
   if (drag.mode === "move") {
@@ -1038,6 +1095,8 @@ let insOpen = false;
 
 function paintInspector() {
   const box = $("#inspector");
+  const au = doc.audio.find(a => a.id === sel);
+  if (au) { paintAudioInspector(au); return; }
   const it = doc.items.find(i => i.id === sel);
   if (!it) {
     if (insOpen) { box.classList.remove("on"); box.innerHTML = ""; insOpen = false; fit(); }
@@ -1104,22 +1163,23 @@ function field(it, k) {
 }
 
 /* ============================================================ PLAY ====== */
-let lastT = 0;
+let playWall = 0, playFrom = 0;
 setInterval(() => {
   if (!playing) return;
-  const now = performance.now();
-  const dt = Math.min(.2, (now - lastT) / 1000); lastT = now;
-  playhead += dt;
+  // час від стіни, а не від кількості тіків: браузер може глушити таймери, а позиція має бути точною
+  playhead = Math.min(doc.meta.duration, playFrom + (performance.now() - playWall) / 1000);
   if (playhead >= doc.meta.duration) { playhead = doc.meta.duration; stop(); }
   applyTime(playhead);
+  syncAudio(playhead, playing);
   const sc = $("#tlScroll"), x = playhead * dpps;
   if (x > sc.scrollLeft + sc.clientWidth - 40) sc.scrollLeft = x - sc.clientWidth * .4;
 }, 33);
 function play() {
   if (playhead >= doc.meta.duration - .01) playhead = 0;
-  playing = true; lastT = performance.now(); $("#play").textContent = "❚❚";
+  playing = true; playFrom = playhead; playWall = performance.now();
+  $("#play").textContent = "❚❚"; syncAudio(playhead, true);
 }
-function stop() { playing = false; $("#play").textContent = "▶︎"; }
+function stop() { playing = false; $("#play").textContent = "▶︎"; syncAudio(playhead, false); }
 
 /* ============================================================ LIBRARY === */
 function buildLibrary() {
@@ -1230,6 +1290,11 @@ $("#splitBtn").onclick = () => {
 };
 $("#delBtn").onclick = () => {
   if (!sel) return toast("вибери елемент");
+  if (doc.audio.some(a => a.id === sel)) {
+    const el = audioEls.get(sel); if (el) { el.pause(); audioEls.delete(sel); }
+    mut(() => { doc.audio = doc.audio.filter(a => a.id !== sel); });
+    sel = null; paintInspector(); renderTimeline(); return;
+  }
   mut(() => { doc.items = doc.items.filter(i => i.id !== sel); });
   sel = null; paintInspector(); renderTimeline(); applyTime(playhead);
 };
@@ -1279,6 +1344,134 @@ $("#clearAll").onclick = () => {
   $("#projModal").classList.remove("on");
 };
 
+/* ============================================================ AUDIO ===== */
+const audioEls = new Map();
+
+async function peaksOf(buf, n = 300) {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const ac = new AC();
+    const ab = await ac.decodeAudioData(buf.slice(0));
+    const ch = ab.getChannelData(0);
+    const step = Math.max(1, Math.floor(ch.length / n));
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      let m = 0;
+      for (let j = 0; j < step; j++) { const v = Math.abs(ch[i * step + j] || 0); if (v > m) m = v; }
+      out.push(Math.round(m * 100) / 100);
+    }
+    ac.close();
+    return out;
+  } catch (e) { return []; }
+}
+
+function blobToB64(blob) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result).split(",")[1] || "");
+    fr.onerror = rej;
+    fr.readAsDataURL(blob);
+  });
+}
+
+function drawWaves() {
+  document.querySelectorAll(".aclip").forEach(el => {
+    const a = doc.audio.find(x => x.id === el.dataset.aid);
+    const cv = el.querySelector("canvas");
+    if (!a || !cv) return;
+    const w = Math.max(24, Math.round(el.clientWidth * 2)), h = 40;
+    if (cv.width !== w) { cv.width = w; cv.height = h; }
+    const c = cv.getContext("2d");
+    c.clearRect(0, 0, w, h);
+    const pk = (a.peaks && a.peaks.length) ? a.peaks : null;
+    const n = pk ? pk.length : 80;
+    c.fillStyle = "rgba(255,205,150,.9)";
+    for (let i = 0; i < n; i++) {
+      const v = pk ? pk[i] : (.25 + .2 * Math.sin(i * .7));
+      const bh = Math.max(2, v * h), x = i * (w / n);
+      c.fillRect(x + 1, (h - bh) / 2, Math.max(1, w / n - 1.5), bh);
+    }
+  });
+}
+
+/* синхронізація звуку з курсором: грає тільки те, що під головою */
+function syncAudio(t, isPlaying) {
+  for (const a of doc.audio) {
+    let el = audioEls.get(a.id);
+    if (!el) { el = new Audio(a.src); el.preload = "auto"; audioEls.set(a.id, el); }
+    const active = t >= a.start - .02 && t < a.start + a.dur;
+    el.volume = clamp(a.gain == null ? 1 : a.gain, 0, 1);
+    if (!active) { if (!el.paused) el.pause(); continue; }
+    const local = Math.max(0, t - a.start + (a.offset || 0));
+    if (Math.abs(el.currentTime - local) > .3) { try { el.currentTime = local; } catch (e) {} }
+    if (isPlaying) { if (el.paused) el.play().catch(() => {}); }
+    else if (!el.paused) el.pause();
+  }
+}
+
+$("#addAudioBtn").onclick = () => $("#audioFile").click();
+$("#audioFile").onchange = async e => {
+  const f = e.target.files[0];
+  e.target.value = "";
+  if (!f) return;
+  toast("завантажую звук…");
+  try {
+    const buf = await f.arrayBuffer();
+    const peaks = await peaksOf(buf);
+    const b64 = await blobToB64(new Blob([buf]));
+    const r = await fetch(API + "/api/upload", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: f.name, data: b64 })
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.url) throw new Error(j.error || ("HTTP " + r.status));
+    const a = {
+      id: uid(), name: f.name.replace(/\.[^.]+$/, "").slice(0, 40), src: j.url,
+      start: Math.round(playhead * 10) / 10, dur: Math.max(1, j.dur || 10),
+      offset: 0, gain: 1, fadeIn: 0, fadeOut: 0, peaks
+    };
+    mut(() => { doc.audio.push(a); });
+    sel = a.id; paintInspector(); renderTimeline(); syncAudio(playhead, playing);
+    toast("звук додано: " + a.name);
+  } catch (err) {
+    toast("не вийшло: " + (err.message || err));
+  }
+};
+
+function paintAudioInspector(a) {
+  const box = $("#inspector");
+  const fld = (k, label, val, mn, mx, st) =>
+    `<div class="fld"><label>${label}<b>${Number(val).toFixed(k === "start" || k === "dur" || k === "offset" ? 1 : 2)}</b></label>
+      <input type="range" data-ak="${k}" min="${mn}" max="${mx}" step="${st}" value="${val}"></div>`;
+  box.classList.add("on");
+  box.innerHTML = `<div class="insHead">
+      <span class="nm">♪ ${esc(a.name)}</span>
+      <span class="tag">звук</span><span style="flex:1"></span>
+      <button class="ibtn" id="insClose">✕</button></div>
+    <div class="sec"><div class="secT">Розміщення</div><div class="insGrid">
+      ${fld("start", "Початок, с", a.start, 0, Math.max(60, doc.meta.duration), .1)}
+      ${fld("dur", "Тривалість, с", a.dur, .3, 600, .1)}
+      ${fld("offset", "Зсув у файлі, с", a.offset, 0, Math.max(10, a.dur), .1)}
+    </div></div>
+    <div class="sec"><div class="secT">Звук</div><div class="insGrid">
+      ${fld("gain", "Гучність", a.gain, 0, 1.5, .02)}
+      ${fld("fadeIn", "Плавний вхід, с", a.fadeIn, 0, 10, .1)}
+      ${fld("fadeOut", "Плавний вихід, с", a.fadeOut, 0, 10, .1)}
+    </div></div>`;
+  if (!insOpen) { insOpen = true; fit(); }
+  box.querySelectorAll("[data-ak]").forEach(inp => {
+    inp.addEventListener("input", () => {
+      const k = inp.dataset.ak, v = parseFloat(inp.value);
+      a[k] = v;
+      const b = inp.parentElement.querySelector("label b");
+      if (b) b.textContent = Number(v).toFixed(k === "start" || k === "dur" || k === "offset" ? 1 : 2);
+      syncAudio(playhead, playing);
+      renderTimeline(); save();
+    });
+  });
+  $("#insClose").onclick = () => { sel = null; paintInspector(); renderTimeline(); };
+}
+
 /* ============================================================ EXPORT ==== */
 /* Сторінка може лежати де завгодно (у т.ч. GitHub Pages) — тоді експорт
    іде на серверний бекенд. На самому flow-edit — той самий origin. */
@@ -1298,7 +1491,7 @@ async function exportStart(w, h) {
   $("#expBar").style.width = "0%";
   $("#expStatus").textContent = "ставлю в чергу…";
   const payload = JSON.stringify({
-    doc: { version: VERSION, meta: doc.meta, tracks: doc.tracks, items: doc.items }, w, h, fps
+    doc: { version: VERSION, meta: doc.meta, tracks: doc.tracks, items: doc.items, audio: doc.audio }, w, h, fps
   });
   try {
     const r = await fetch(API + "/api/export", {
@@ -1384,6 +1577,7 @@ window.FLOW = {
     syncStage(); renderTimeline(); applyTime(0);
   },
   exportMode(on) { document.body.classList.toggle("export", !!on); },
+  audioState() { return [...audioEls.entries()].map(([id, a]) => ({ id, paused: a.paused, t: Math.round(a.currentTime * 10) / 10, vol: a.volume })); },
   get duration() { return doc.meta.duration; },
   get playhead() { return playhead; },
   get sel() { return sel; },
