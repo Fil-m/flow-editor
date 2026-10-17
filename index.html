@@ -148,7 +148,7 @@
   <header>
     <span class="logo">FLOW</span>
     <input class="title" id="title" value="Без назви" spellcheck="false">
-    <span class="ver" id="ver" title="версія збірки">v0.8</span>
+    <span class="ver" id="ver" title="версія збірки">v0.9</span>
     <span class="t" id="hdur">0.0 с</span>
     <button class="ibtn" id="undo" title="Скасувати">↶</button>
     <button class="ibtn" id="redo" title="Повторити">↷</button>
@@ -999,7 +999,7 @@ function renderTimeline() {
   $("#tlInfo").textContent = doc.items.length + " ел. · " + doc.tracks.length + " дор. · " + total.toFixed(1) + "с";
   $("#hdur").textContent = doc.meta.duration.toFixed(1) + " с";
   const v = $("#ver");
-  if (v && v.dataset.set !== "1") { v.textContent = "v" + ("0.8").toString(); v.dataset.set = "1"; }
+  if (v && v.dataset.set !== "1") { v.textContent = "v" + ("0.9").toString(); v.dataset.set = "1"; }
   $("#playhead").style.left = (TL_X0 + playhead * dpps) + "px";
 }
 
