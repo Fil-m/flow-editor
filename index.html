@@ -1,0 +1,1150 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a0b12">
+<title>Flow Edit — редактор</title>
+<!--
+  АРХІТЕКТУРА (крок 1: базовий редактор + CSS-елементи)
+
+  DOC — документ: {version, meta{w,h,fps,duration,bg,title}, tracks[], items[]}
+        item = {id, type, track, start, dur, speed, x,y,w,h, alpha, ...параметри}
+        Новий тип елемента = один запис у REG. Нічого більше чіпати не треба.
+
+  REG — реєстр рендерерів:
+        kind:"dom"    → node(it) + anims(it)  (WAAPI-кліпи, ними керує час)
+        kind:"canvas" → node(it) + paint(ctx, local, w, h, it)
+        Майбутні типи (canvas-FX з fxlib, відео, звук) додаються сюди ж.
+
+  applyTime(t) — ЄДИНА точка кадру. Усе, що видно, залежить тільки від t
+        (анімації призупинені, currentTime ставиться вручну). Тому майбутній
+        експорт = ганяти applyTime(кадр) у headless і знімати екран: WYSIWYG.
+        Часова модель детермінована: випадковість сіється від id елемента.
+
+  mut(fn) — будь-яка зміна документа: undo-снепшот + autosave + перерендер.
+-->
+<style>
+  :root{
+    --bg:#0a0b12; --panel:#12141f; --panel2:#171a27; --line:rgba(255,255,255,.09);
+    --txt:#e9edff; --mut:#8b93ad; --acc:#5ee0c8; --acc2:#7fd6ff; --warn:#ffb46a;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
+    font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+    overflow:hidden;user-select:none;-webkit-user-select:none}
+  #app{display:grid;grid-template-rows:48px minmax(0,1fr) auto auto auto;height:100dvh}
+
+  header{display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid var(--line);background:var(--panel);min-width:0}
+  header .logo{font-size:12px;letter-spacing:.16em;color:var(--acc);font-weight:700;flex:0 0 auto}
+  header input.title{flex:1;min-width:40px;background:transparent;border:0;color:var(--txt);font:inherit;font-size:13.5px;padding:6px 4px;border-radius:8px}
+  header input.title:focus{outline:1px solid var(--line);background:var(--panel2)}
+  header .t{font-variant-numeric:tabular-nums;color:var(--mut);font-size:12px;flex:0 0 auto}
+  .ibtn{appearance:none;border:1px solid var(--line);background:var(--panel2);color:var(--txt);
+    height:32px;min-width:32px;padding:0 9px;border-radius:9px;font:inherit;font-size:13px;
+    display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:0 0 auto}
+  .ibtn:active{transform:scale(.97)}
+  .ibtn.acc{background:var(--acc);color:#04110e;border-color:transparent;font-weight:600}
+  .ibtn.warn{color:var(--warn);border-color:rgba(255,180,106,.35)}
+
+  main{position:relative;display:grid;place-items:center;min-height:0;overflow:hidden;touch-action:none;
+    background:radial-gradient(circle at 50% 38%, #141726 0%, var(--bg) 72%)}
+  .stageWrap{position:relative;box-shadow:0 20px 60px -20px #000;border-radius:6px;overflow:hidden;background:#000}
+  #stage{position:absolute;left:0;top:0;width:1080px;height:1920px;transform-origin:0 0;background:#05060d;overflow:hidden}
+  .item{position:absolute;will-change:transform,opacity}
+  .el{width:100%;height:100%;position:relative}
+
+  .transport{display:flex;align-items:center;gap:7px;padding:7px 10px;background:var(--panel);border-top:1px solid var(--line)}
+  .transport .time{font-variant-numeric:tabular-nums;font-size:12px;color:var(--mut);min-width:92px;text-align:center}
+  .transport .spacer{flex:1}
+
+  #inspector{background:var(--panel2);border-top:1px solid var(--line);padding:9px 10px;max-height:26dvh;overflow:auto;display:none}
+  #inspector.on{display:block}
+  .insGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(146px,1fr));gap:8px}
+  .fld{display:grid;gap:3px}
+  .fld label{font-size:11px;color:var(--mut);display:flex;justify-content:space-between;gap:6px}
+  .fld label b{color:var(--acc);font-weight:500;font-variant-numeric:tabular-nums}
+  .fld input[type=range]{width:100%;accent-color:var(--acc);height:16px}
+  .fld input[type=text],.fld select{background:var(--panel);border:1px solid var(--line);
+    color:var(--txt);font:inherit;font-size:13px;padding:6px 8px;border-radius:8px;width:100%}
+  .fld input[type=color]{width:100%;height:28px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:2px}
+  .insHead{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .insHead .nm{font-size:13px;font-weight:600}
+  .insHead .tag{font-size:11px;color:var(--mut)}
+
+  .tl{background:var(--panel);border-top:1px solid var(--line);height:140px;display:grid;grid-template-rows:auto 1fr auto}
+  .tlbar{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line)}
+  .tlbar .lbl{font-size:11px;color:var(--mut)}
+  .tlbar input[type=range]{width:100px;accent-color:var(--acc)}
+  .tlbar .spacer{flex:1}
+  .tlscroll{overflow-x:auto;overflow-y:hidden;position:relative;touch-action:pan-x}
+  .tlinner{position:relative;height:100%;min-width:100%}
+  .ruler{position:relative;height:20px;border-bottom:1px solid var(--line);cursor:pointer}
+  .ruler i{position:absolute;top:0;width:1px;background:rgba(255,255,255,.14);height:6px}
+  .ruler i.maj{height:11px;background:rgba(255,255,255,.3)}
+  .ruler span{position:absolute;top:5px;font-size:10px;color:var(--mut);transform:translateX(2px)}
+  .track{position:relative;height:62px;margin-top:6px}
+  .clip{position:absolute;top:0;height:58px;border-radius:8px;border:1px solid rgba(94,224,200,.35);
+    background:linear-gradient(180deg,rgba(94,224,200,.16),rgba(94,224,200,.06));overflow:hidden;cursor:grab;touch-action:none}
+  .clip.sel{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset,0 6px 18px -8px var(--acc)}
+  .clip .nm{position:absolute;left:7px;top:6px;right:16px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .clip .du{position:absolute;left:7px;bottom:6px;font-size:10px;color:var(--mut);font-variant-numeric:tabular-nums}
+  .clip .grip{position:absolute;right:0;top:0;width:14px;height:100%;cursor:ew-resize;background:linear-gradient(90deg,transparent,rgba(255,255,255,.16))}
+  .playhead{position:absolute;top:0;bottom:0;width:2px;background:var(--acc2);pointer-events:none;box-shadow:0 0 8px var(--acc2)}
+  .playhead::before{content:"";position:absolute;top:0;left:-5px;border-left:6px solid transparent;
+    border-right:6px solid transparent;border-top:7px solid var(--acc2)}
+
+  .modal{position:fixed;inset:0;background:rgba(4,5,10,.75);backdrop-filter:blur(6px);display:none;z-index:50}
+  .modal.on{display:grid;grid-template-rows:auto 1fr}
+  .mhead{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .mhead .t{font-size:15px;font-weight:600;flex:1}
+  .mgrid{overflow:auto;padding:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(126px,1fr));gap:10px;align-content:start}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:8px;cursor:pointer;display:grid;gap:6px}
+  .card:active{border-color:var(--acc)}
+  .thumb{position:relative;width:100%;aspect-ratio:9/16;border-radius:8px;overflow:hidden;
+    background:radial-gradient(circle at 50% 42%,#26325a 0%,#131a30 55%,#0a0e18 100%)}
+  .thumb .mini{position:absolute;left:0;top:0;width:1080px;height:1920px;transform-origin:0 0;pointer-events:none}
+  .card .t{font-size:11.5px;text-align:center}
+  .card .g{font-size:10px;text-align:center;color:var(--mut)}
+  .toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#0d2b26;
+    border:1px solid rgba(94,224,200,.4);color:#c9fff3;padding:8px 14px;border-radius:10px;
+    font-size:12.5px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:60;max-width:88vw;text-align:center}
+  .toast.on{opacity:1}
+
+  /* режим експорту: у кадрі лише сцена, рівно 1080×1920 */
+  body.export #app{display:block;height:auto}
+  body.export header,body.export .transport,body.export #inspector,
+  body.export .tl,body.export .modal,body.export .toast{display:none !important}
+  body.export main{display:block;padding:0;background:#000;overflow:visible;touch-action:auto}
+  body.export .stageWrap{width:1080px !important;height:1920px !important;box-shadow:none;border-radius:0}
+  body.export #stage{transform:none}
+  body.export #stage .item{will-change:auto}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <span class="logo">FLOW</span>
+    <input class="title" id="title" value="Без назви" spellcheck="false">
+    <span class="t" id="hdur">0.0 с</span>
+    <button class="ibtn" id="undo" title="Скасувати">↶</button>
+    <button class="ibtn" id="redo" title="Повторити">↷</button>
+    <button class="ibtn acc" id="expBtn" title="Експорт MP4">⤓</button>
+    <button class="ibtn" id="menu" title="Проєкт">⋯</button>
+  </header>
+
+  <main id="main">
+    <div class="stageWrap" id="stageWrap"><div id="stage"></div></div>
+  </main>
+
+  <div class="transport">
+    <button class="ibtn acc" id="play" style="width:44px">▶︎</button>
+    <span class="time" id="time">0.0 / 20.0</span>
+    <button class="ibtn" id="toStart">⏮</button>
+    <button class="ibtn" id="toEnd">⏭</button>
+    <span class="spacer"></span>
+    <button class="ibtn acc" id="addBtn">＋ Елемент</button>
+  </div>
+
+  <div id="inspector"></div>
+
+  <section class="tl">
+    <div class="tlbar">
+      <span class="lbl">Таймлайн</span>
+      <input type="range" id="zoom" min="24" max="150" value="60">
+      <span class="spacer"></span>
+      <span class="lbl" id="tlInfo">—</span>
+    </div>
+    <div class="tlscroll" id="tlScroll">
+      <div class="tlinner" id="tlInner">
+        <div class="ruler" id="ruler"></div>
+        <div class="track" id="track"></div>
+        <div class="playhead" id="playhead"></div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;padding:6px 10px;border-top:1px solid var(--line)">
+      <button class="ibtn" id="dupBtn">⧉ Дубль</button>
+      <button class="ibtn" id="splitBtn">✂ Різати</button>
+      <button class="ibtn" id="delBtn">🗑 Видалити</button>
+      <span style="flex:1"></span>
+      <button class="ibtn" id="fitBtn">Увесь</button>
+    </div>
+  </section>
+</div>
+
+<div class="modal" id="lib">
+  <div class="mhead"><span class="t">Бібліотека елементів</span><button class="ibtn" id="libClose">✕</button></div>
+  <div class="mgrid" id="libGrid"></div>
+</div>
+
+<div class="modal" id="projModal">
+  <div class="mhead"><span class="t">Проєкт</span><button class="ibtn" id="projClose">✕</button></div>
+  <div class="mgrid" style="grid-template-columns:1fr;align-content:start">
+    <div class="card" style="cursor:default;gap:10px">
+      <button class="ibtn" id="expJson">⬇ Зберегти JSON</button>
+      <label class="ibtn" style="cursor:pointer">⬆ Відкрити JSON<input type="file" id="impJson" accept=".json" hidden></label>
+      <button class="ibtn" id="copyJson">⧉ Скопіювати JSON</button>
+      <button class="ibtn warn" id="clearAll">Очистити проєкт</button>
+      <div style="font-size:11.5px;color:var(--mut);line-height:1.5">
+        Проєкт зберігається в цьому браузері автоматично. JSON — для перенесення або архіву.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="expModal">
+  <div class="mhead"><span class="t">Експорт MP4</span><button class="ibtn" id="expClose">✕</button></div>
+  <div class="mgrid" style="grid-template-columns:1fr;align-content:start">
+    <div class="card" style="cursor:default;gap:10px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="ibtn" id="expDraft">Чернетка 540×960</button>
+        <button class="ibtn acc" id="expFinal">Фінал 1080×1920</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span style="font-size:12px;color:var(--mut)">кадрів/с</span>
+        <select id="expFps" class="fld" style="background:var(--panel);border:1px solid var(--line);color:var(--txt);
+          font:inherit;font-size:13px;padding:7px 10px;border-radius:9px">
+          <option value="24">24</option><option value="30" selected>30</option>
+        </select>
+        <span style="font-size:12px;color:var(--mut)" id="expDur"></span>
+      </div>
+      <div class="bar" style="height:8px;border-radius:6px;background:rgba(255,255,255,.08);overflow:hidden">
+        <i id="expBar" style="display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acc),#7fd6ff);transition:width .3s"></i>
+      </div>
+      <div class="status" id="expStatus" style="font-size:12.5px;color:var(--mut)">виберіть якість</div>
+      <div id="expLink"></div>
+      <div class="err" id="expErr" style="color:#ff9a8a;font-size:12px;white-space:pre-wrap"></div>
+      <div style="font-size:11.5px;color:var(--mut);line-height:1.5">
+        Рендер іде на сервері — сторінку можна закрити. Фінал ≈ 0.4 с на кадр, чернетка ≈ 0.12 с.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+"use strict";
+
+/* ============================================================ DOC ====== */
+const VERSION = 1;
+const W = 1080, H = 1920;
+const EXP = new URLSearchParams(location.search).has("export");
+
+function newDoc() {
+  return {
+    version: VERSION,
+    meta: { title: "Без назви", w: W, h: H, fps: 30, duration: 20, bg: "#05060d" },
+    tracks: [{ id: "v1", name: "Сцена" }],
+    items: []
+  };
+}
+function load() {
+  try {
+    const raw = localStorage.getItem("flowedit.v1");
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (!d || d.version !== VERSION) return null;            // тут буде migrate()
+    if (!Array.isArray(d.items)) d.items = [];
+    if (!Array.isArray(d.tracks) || !d.tracks.length) d.tracks = [{ id: "v1", name: "Сцена" }];
+    d.meta = Object.assign(newDoc().meta, d.meta || {});
+    return d;
+  } catch (e) { return null; }
+}
+
+const doc = load() || newDoc();
+let sel = null, playhead = 0, playing = false, dpps = 60;
+const nodes = new Map();
+
+/* ============================================================ UTIL ====== */
+const $ = s => document.querySelector(s);
+const uid = () => "i" + Math.random().toString(36).slice(2, 9);
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmt = t => (Math.floor(t / 60) + ":" + (t % 60).toFixed(1).padStart(4, "0"));
+
+/* детермінований генератор: однаковий id → однакова картинка завжди */
+function seeded(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  let s = h >>> 0;
+  return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+}
+function hexA(hex, a) {
+  const h = String(hex || "#ffffff").replace("#", "");
+  const v = h.length === 3 ? h.split("").map(c => c + c).join("") : h.padEnd(6, "0").slice(0, 6);
+  const n = parseInt(v, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+let toastT = 0;
+function toast(msg) {
+  const el = $("#toast");
+  el.textContent = msg; el.classList.add("on");
+  clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove("on"), 1700);
+}
+
+/* ============================================================ REG ======= */
+const REG = {};
+const reg = (id, o) => { REG[id] = Object.assign({ id, kind: "dom", group: "Інше" }, o); };
+
+reg("title", {
+  name: "Заголовок", group: "Текст",
+  def: { text: "Ти вже у Потоці", size: 92, weight: 300, spacing: 0.01, color: "#ffffff",
+         x: 50, y: 42, w: 84, h: 26, alpha: 1, speed: 1, dur: 4, anim: 4,
+         align: "center", shadow: 40, rot: 0, blur: 0 },
+  fields: ["text", "size", "weight", "spacing", "align", "shadow", "color", "x", "y", "w"],
+  node(it) {
+    return `<div style="font-size:${it.size}px;font-weight:${it.weight};letter-spacing:${it.spacing}em;
+      color:${it.color};text-align:${it.align || "center"};line-height:1.15;
+      text-shadow:0 0 ${it.shadow || 0}px ${hexA(it.color, .45)}">${esc(it.text)}</div>`;
+  },
+  anims(it) {
+    return [{ sel: "div", loop: false, kf: [
+      { opacity: 0, transform: "translateY(40px)", filter: "blur(10px)", offset: 0 },
+      { opacity: 1, transform: "translateY(0)", filter: "blur(0px)", offset: .22 },
+      { opacity: 1, transform: "translateY(0)", filter: "blur(0px)", offset: .8 },
+      { opacity: 0, transform: "translateY(-18px)", filter: "blur(8px)", offset: 1 }
+    ], opt: { duration: Math.max(800, (it.anim || it.dur) * 1000), easing: "cubic-bezier(.22,.8,.2,1)" } }];
+  }
+});
+
+reg("subtitle", {
+  name: "Підзаголовок", group: "Текст",
+  def: { text: "дихай — і все станеться", size: 42, weight: 300, spacing: 0.04, color: "#b9c6ff",
+         x: 50, y: 55, w: 78, h: 12, alpha: .9, speed: 1, dur: 4, anim: 4,
+         align: "center", shadow: 20, rot: 0, blur: 0 },
+  fields: ["text", "size", "weight", "spacing", "align", "shadow", "color", "x", "y", "w", "alpha"],
+  node(it) {
+    return `<div style="font-size:${it.size}px;font-weight:${it.weight};letter-spacing:${it.spacing}em;
+      color:${it.color};text-align:${it.align || "center"};line-height:1.3;
+      text-shadow:0 0 ${it.shadow || 0}px ${hexA(it.color, .5)}">${esc(it.text)}</div>`;
+  },
+  anims(it) {
+    return [{ sel: "div", loop: false, kf: [
+      { opacity: 0, transform: "translateY(18px)", offset: 0 },
+      { opacity: 1, transform: "translateY(0)", offset: .3 },
+      { opacity: 1, transform: "translateY(0)", offset: .85 },
+      { opacity: 0, transform: "translateY(-8px)", offset: 1 }
+    ], opt: { duration: Math.max(700, (it.anim || it.dur) * 1000), easing: "ease-out" } }];
+  }
+});
+
+reg("glow", {
+  name: "Сяйво", group: "Світло",
+  def: { color: "#7fd6ff", color2: "#2a4cff", x: 50, y: 45, w: 70, h: 70, alpha: .7, speed: 1, dur: 6, anim: 6, rot: 0, blur: 0 },
+  fields: ["color", "color2", "x", "y", "w", "h", "alpha", "speed"],
+  node(it) {
+    return `<div style="width:100%;height:100%;
+      background:radial-gradient(circle at 50% 50%,${hexA(it.color, .6)} 0%,${hexA(it.color2 || it.color, .22)} 42%,transparent 72%);
+      filter:blur(${Math.round(it.w * 2)}px)"></div>`;
+  },
+  anims() {
+    return [{ sel: "div", loop: true, kf: [
+      { transform: "scale(.86)", opacity: .55 },
+      { transform: "scale(1.08)", opacity: 1 },
+      { transform: "scale(.86)", opacity: .55 }
+    ], opt: { duration: 5200, easing: "ease-in-out" } }];
+  }
+});
+
+reg("rays", {
+  name: "Промені", group: "Світло",
+  def: { color: "#8fd0ff", color2: "#c9a6ff", x: 50, y: 58, w: 120, h: 120, alpha: .28, speed: 1, dur: 8, anim: 8, rot: 0, blur: 0 },
+  fields: ["color", "color2", "x", "y", "w", "alpha", "speed"],
+  node(it) {
+    return `<div style="width:100%;height:100%;border-radius:50%;
+      background:conic-gradient(from 0deg,transparent 0 8%,${hexA(it.color, .5)} 10%,transparent 14% 24%,
+        ${hexA(it.color2 || it.color, .35)} 27%,transparent 31% 44%,${hexA(it.color, .45)} 47%,transparent 52% 70%,
+        ${hexA(it.color2 || it.color, .3)} 74%,transparent 78%);
+      -webkit-mask-image:radial-gradient(circle,rgba(0,0,0,.95) 18%,transparent 70%);
+      mask-image:radial-gradient(circle,rgba(0,0,0,.95) 18%,transparent 70%);filter:blur(6px)"></div>`;
+  },
+  anims() {
+    return [{ sel: "div", loop: true, kf: [{ transform: "rotate(0deg)" }, { transform: "rotate(360deg)" }],
+      opt: { duration: 46000, easing: "linear" } }];
+  }
+});
+
+reg("vignette", {
+  name: "Віньєтка", group: "Світло",
+  def: { x: 50, y: 50, w: 100, h: 100, alpha: 1, speed: 1, dur: 20 },
+  fields: ["x", "y", "w", "h", "alpha"],
+  node() { return `<div style="width:100%;height:100%;background:radial-gradient(ellipse at 50% 50%,transparent 40%,rgba(0,0,0,.75) 100%)"></div>`; },
+  anims() { return []; }
+});
+
+reg("particles", {
+  name: "Частинки", group: "Рух",
+  def: { color: "#9fe8ff", x: 50, y: 50, w: 100, h: 100, alpha: .85, speed: 1, count: 46, dur: 10, anim: 10,
+         size: 1, rot: 0, blur: 0 },
+  fields: ["color", "count", "size", "x", "y", "w", "alpha", "speed"],
+  node(it) {
+    const R = seeded(it.id + "n"), n = Math.round(it.count), sz = it.size || 1;
+    let out = "";
+    for (let i = 0; i < n; i++) {
+      const s = (1 + R() * 3.2) * sz;
+      out += `<i style="position:absolute;left:${(R() * 100).toFixed(2)}%;top:${(R() * 100).toFixed(2)}%;
+        width:${s}px;height:${s}px;border-radius:50%;background:${it.color};opacity:${(.25 + R() * .75).toFixed(2)};
+        box-shadow:0 0 6px ${hexA(it.color, .8)}"></i>`;
+    }
+    return `<div style="width:100%;height:100%;position:relative">${out}</div>`;
+  },
+  anims() {
+    return [{ sel: "i", each: true, loop: true, kf: [
+      { transform: "translateY(0px)", opacity: .15 },
+      { transform: "translateY(-140px)", opacity: .9, offset: .5 },
+      { transform: "translateY(-280px)", opacity: 0 }
+    ], opt: { duration: 7000, easing: "linear" } }];
+  },
+  eachDelay: (it, i) => seeded(it.id + "d" + i)() * 5000
+});
+
+reg("embers", {
+  name: "Іскри", group: "Рух",
+  def: { color: "#ffb46a", x: 50, y: 72, w: 100, h: 60, alpha: .9, speed: 1, count: 26, dur: 12, anim: 12,
+         size: 1, rot: 0, blur: 0 },
+  fields: ["color", "count", "size", "x", "y", "w", "h", "alpha", "speed"],
+  node(it) {
+    const R = seeded(it.id + "n"), n = Math.round(it.count), sz = it.size || 1;
+    let out = "";
+    for (let i = 0; i < n; i++) {
+      const s = (2 + R() * 3) * sz;
+      out += `<i style="position:absolute;left:${(R() * 100).toFixed(2)}%;top:${(55 + R() * 45).toFixed(2)}%;
+        width:${s}px;height:${s}px;border-radius:50%;background:${it.color};
+        box-shadow:0 0 10px ${hexA(it.color, .9)};opacity:${(.3 + R() * .7).toFixed(2)}"></i>`;
+    }
+    return `<div style="width:100%;height:100%;position:relative">${out}</div>`;
+  },
+  anims() {
+    return [{ sel: "i", each: true, loop: true, kf: [
+      { transform: "translate(0,0) scale(1)", opacity: .2 },
+      { transform: "translate(14px,-120px) scale(1.15)", opacity: 1, offset: .45 },
+      { transform: "translate(-10px,-260px) scale(.7)", opacity: 0 }
+    ], opt: { duration: 5200, easing: "ease-out" } }];
+  },
+  eachDelay: (it, i) => seeded(it.id + "e" + i)() * 4000
+});
+
+reg("cross", {
+  name: "Хрест", group: "Символи",
+  def: { x: 50, y: 58, w: 34, h: 46, color: "#000000", alpha: 1, speed: 1, dur: 20, anim: 20,
+         shape: "latin", bar: 9, rot: 0, blur: 0 },
+  fields: ["shape", "bar", "x", "y", "w", "h", "color", "alpha"],
+  node(it) {
+    const bar = Math.max(4, Math.round(it.h * (it.bar || 9)));
+    if (it.shape === "orthodox") {
+      return `<div style="position:relative;width:100%;height:100%">
+        <b style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${bar}px;height:100%;
+          background:${it.color};border-radius:${Math.round(bar * .16)}px"></b>
+        <b style="position:absolute;left:12%;top:16%;width:76%;height:${Math.round(bar * .85)}px;
+          background:${it.color};border-radius:${Math.round(bar * .16)}px"></b>
+        <b style="position:absolute;left:6%;top:34%;width:88%;height:${Math.round(bar * .85)}px;
+          background:${it.color};transform:rotate(-12deg);border-radius:${Math.round(bar * .16)}px"></b>
+        <b style="position:absolute;left:26%;top:78%;width:48%;height:${Math.round(bar * .8)}px;
+          background:${it.color};transform:rotate(-16deg);border-radius:${Math.round(bar * .16)}px"></b>
+      </div>`;
+    }
+    return `<div style="position:relative;width:100%;height:100%">
+      <b style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${bar}px;height:100%;
+        background:${it.color};border-radius:${Math.round(bar * .18)}px"></b>
+      <b style="position:absolute;left:0;top:24%;width:100%;height:${Math.round(bar * .92)}px;
+        background:${it.color};border-radius:${Math.round(bar * .18)}px"></b></div>`;
+  },
+  anims(it) {
+    return [{ sel: "div", loop: false, kf: [
+      { opacity: 0, transform: "translateY(30px) scale(.97)" },
+      { opacity: 1, transform: "translateY(0) scale(1)", offset: .25 },
+      { opacity: 1, transform: "translateY(0) scale(1)", offset: .9 },
+      { opacity: 0 }
+    ], opt: { duration: Math.max(900, (it.anim || it.dur) * 1000), easing: "ease-out" } }];
+  }
+});
+
+reg("line", {
+  name: "Лінія", group: "Символи",
+  def: { color: "#5ee0c8", x: 50, y: 50, w: 40, h: 1, alpha: .9, speed: 1, dur: 4 },
+  fields: ["color", "x", "y", "w", "alpha", "speed"],
+  node(it) {
+    return `<div style="width:100%;height:2px;background:linear-gradient(90deg,transparent,${it.color},transparent);
+      box-shadow:0 0 14px ${hexA(it.color, .8)}"></div>`;
+  },
+  anims(it) {
+    return [{ sel: "div", loop: false, kf: [
+      { transform: "scaleX(0)", opacity: 0 },
+      { transform: "scaleX(1)", opacity: 1, offset: .35 },
+      { transform: "scaleX(1)", opacity: 1, offset: .8 },
+      { transform: "scaleX(1)", opacity: 0 }
+    ], opt: { duration: Math.max(700, (it.anim || it.dur) * 1000), easing: "ease-in-out" } }];
+  }
+});
+
+/* ---------- ОБРАЗИ ШЛЯХУ (з каталогу візуалів) ---------- */
+reg("vortex", {
+  name: "Вихор", group: "Образи",
+  def: { color: "#56c8c4", color2: "#7fd6ff", x: 50, y: 45, w: 62, h: 62, alpha: .9, speed: 1, dur: 8, anim: 8,
+         dir: 1, rot: 0, blur: 0 },
+  fields: ["color", "color2", "dir", "x", "y", "w", "alpha", "speed"],
+  node(it) {
+    return `<div style="width:100%;height:100%;border-radius:50%;
+      background:conic-gradient(from 0deg,transparent 0%,${hexA(it.color, .75)} 18%,transparent 34%,
+        ${hexA(it.color2 || it.color, .5)} 52%,transparent 66%,${hexA(it.color, .85)} 84%,transparent 100%);
+      -webkit-mask-image:radial-gradient(circle,transparent 10%,#000 42%,transparent 74%);
+      mask-image:radial-gradient(circle,transparent 10%,#000 42%,transparent 74%);
+      filter:blur(${Math.round(it.w * .06)}px)"></div>`;
+  },
+  anims(it) {
+    return [{ sel: "div", loop: true, kf: [{ transform: "rotate(0deg) scale(1)" },
+      { transform: `rotate(${it && it.dir < 0 ? -360 : 360}deg) scale(1.06)` }], opt: { duration: 9000, easing: "linear" } }];
+  }
+});
+
+reg("rings", {
+  name: "Кола", group: "Образи",
+  def: { color: "#5ee0c8", x: 50, y: 50, w: 60, h: 60, alpha: .8, speed: 1, count: 4, dur: 8, anim: 8,
+         bar: 35, rot: 0, blur: 0 },
+  fields: ["color", "count", "bar", "x", "y", "w", "alpha", "speed"],
+  node(it) {
+    const n = Math.max(2, Math.round(it.count));
+    let out = "";
+    for (let i = 0; i < n; i++) out += `<b style="position:absolute;left:0;top:0;width:100%;height:100%;
+      border-radius:50%;border:${Math.max(1, Math.round(it.w * ((it.bar || 35) / 100)))}px solid ${it.color};opacity:.8"></b>`;
+    return out;
+  },
+  anims() {
+    return [{ sel: "b", each: true, loop: true, kf: [
+      { transform: "scale(.15)", opacity: .85 },
+      { transform: "scale(1)", opacity: 0 }
+    ], opt: { duration: 4800, easing: "ease-out" } }];
+  },
+  eachDelay: (it, i) => i * (4800 / Math.max(2, Math.round(it.count)))
+});
+
+reg("nebula", {
+  name: "Туманність", group: "Образи",
+  def: { color: "#8a5cff", color2: "#2f7dff", x: 50, y: 40, w: 90, h: 70, alpha: .55, speed: 1, dur: 12, anim: 12, rot: 0, blur: 0 },
+  fields: ["color", "color2", "x", "y", "w", "h", "alpha", "speed"],
+  node(it) {
+    const R = seeded(it.id + "nb");
+    let out = "";
+    for (let i = 0; i < 4; i++) {
+      const cx = 20 + R() * 60, cy = 20 + R() * 60, s = 30 + R() * 34;
+      const col = i % 2 ? (it.color2 || it.color) : it.color;
+      out += `<b style="position:absolute;left:${cx - s / 2}%;top:${cy - s / 2}%;width:${s}%;height:${s * 1.2}%;
+        border-radius:50%;filter:blur(38px);
+        background:radial-gradient(circle,${hexA(col, .55)} 0%,${hexA(col, .12)} 55%,transparent 72%)"></b>`;
+    }
+    return out;
+  },
+  anims() {
+    return [{ sel: "b", each: true, loop: true, kf: [
+      { transform: "translate(0,0) scale(1)", opacity: .7 },
+      { transform: "translate(10px,-14px) scale(1.12)", opacity: 1 },
+      { transform: "translate(0,0) scale(1)", opacity: .7 }
+    ], opt: { duration: 11000, easing: "ease-in-out" } }];
+  },
+  eachDelay: (it, i) => i * 1400
+});
+
+reg("constellation", {
+  name: "Сузір'я", group: "Образи",
+  def: { color: "#cfe4ff", x: 50, y: 45, w: 90, h: 60, alpha: .9, speed: 1, count: 54, dur: 12, anim: 12,
+         size: 1, rot: 0, blur: 0 },
+  fields: ["color", "count", "size", "x", "y", "w", "h", "alpha", "speed"],
+  node(it) {
+    const R = seeded(it.id + "cs"), n = Math.round(it.count), sz = it.size || 1;
+    let out = "";
+    for (let i = 0; i < n; i++) {
+      const s = (1.5 + R() * 3.4) * sz;
+      out += `<i style="position:absolute;left:${(R() * 100).toFixed(2)}%;top:${(R() * 100).toFixed(2)}%;
+        width:${s}px;height:${s}px;border-radius:50%;background:${it.color};
+        box-shadow:0 0 ${Math.round(4 + s * 2)}px ${hexA(it.color, .9)}"></i>`;
+    }
+    return out;
+  },
+  anims() {
+    return [{ sel: "i", each: true, loop: true, kf: [
+      { opacity: .18, transform: "scale(.85)" },
+      { opacity: 1, transform: "scale(1)" },
+      { opacity: .18, transform: "scale(.85)" }
+    ], opt: { duration: 3600, easing: "ease-in-out" } }];
+  },
+  eachDelay: (it, i) => seeded(it.id + "cd" + i)() * 3600
+});
+
+reg("grain", {
+  kind: "canvas", name: "Зерно", group: "Шум",
+  def: { x: 50, y: 50, w: 100, h: 100, alpha: .12, speed: 1, dur: 20 },
+  fields: ["x", "y", "w", "h", "alpha", "speed"],
+  node() { return `<canvas width="270" height="480" style="width:100%;height:100%;image-rendering:pixelated"></canvas>`; },
+  paint(ctx, local) {
+    const img = ctx.createImageData(ctx.canvas.width, ctx.canvas.height);
+    const d = img.data;
+    let s = (Math.floor(local * 18) + 1) * 7919;
+    for (let i = 0; i < d.length; i += 4) {
+      s = (s * 1103515245 + 12345) & 0x7fffffff;
+      const v = 128 + ((s % 1000) / 1000 - .5) * 255;
+      d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+});
+
+/* ============================================================ STAGE ===== */
+function buildItem(it) {
+  const p = REG[it.type];
+  if (!p) throw new Error("невідомий тип " + it.type);
+  const el = document.createElement("div");
+  el.className = "item " + it.type;
+  el.dataset.id = it.id;
+  el.style.left = it.x + "%";
+  el.style.top = it.y + "%";
+  el.style.width = it.w + "%";
+  el.style.height = it.h + "%";
+  el.style.transform = `translate(-50%,-50%) rotate(${it.rot || 0}deg)`;
+  if (it.blur) el.style.filter = `blur(${it.blur}px)`;
+  el.style.opacity = it.alpha;
+  el.innerHTML = `<div class="el">${p.node(it)}</div>`;
+  return el;
+}
+
+/* Один хелпер для всіх анімацій.
+   ВАЖЛИВО: easing на рівні анімації в WAAPI спотворює офсети keyframes
+   (Chrome віддає проміжне значення замість 1). Тому easing переносимо
+   в самі keyframes — по сегментах. */
+function animateNode(node, a, delay) {
+  const opt = Object.assign({ fill: "both", iterations: a.loop ? Infinity : 1 }, a.opt);
+  const eas = opt.easing && opt.easing !== "linear" ? opt.easing : null;
+  if (eas) delete opt.easing;
+  if (delay) opt.delay = delay;
+  const kf = eas
+    ? a.kf.map((k, i) => (i < a.kf.length - 1 && !k.easing) ? Object.assign({}, k, { easing: eas }) : k)
+    : a.kf;
+  return node.animate(kf, opt);
+}
+
+function mount(it) {
+  unmount(it.id);
+  let el;
+  try { el = buildItem(it); } catch (e) { console.warn("mount", it.type, e); return; }
+  $("#stage").appendChild(el);
+  const p = REG[it.type];
+  if (p.kind === "canvas") {
+    const cv = el.querySelector("canvas");
+    try {
+      const ctx = cv.getContext("2d", { willReadFrequently: true });
+      nodes.set(it.id, { el, anims: [], canvas: ctx, preset: p });
+    } catch (e) { nodes.set(it.id, { el, anims: [], preset: p }); }
+    return;
+  }
+  const anims = [];
+  let list = [];
+  try { list = p.anims ? p.anims(it) : []; } catch (e) { console.warn(e); }
+  for (const a of list) {
+    const targets = a.each ? [...el.querySelectorAll(a.sel)] : [el.querySelector(a.sel)];
+    let i = 0;
+    for (const tnode of targets) {
+      if (!tnode) { i++; continue; }
+      const opt = Object.assign({ fill: "both", iterations: a.loop ? Infinity : 1 }, a.opt);
+      if (a.each && p.eachDelay) opt.delay = p.eachDelay(it, i);
+      try {
+        const an = animateNode(tnode, a, opt.delay);
+        an.pause();
+        anims.push({ an, loop: !!a.loop });
+      } catch (e) {}
+      i++;
+    }
+  }
+  nodes.set(it.id, { el, anims, preset: p });
+}
+function unmount(id) {
+  const n = nodes.get(id);
+  if (!n) return;
+  try { n.el.remove(); } catch (e) {}
+  nodes.delete(id);
+}
+
+/* ЄДИНА точка кадру */
+function applyTime(t) {
+  for (const it of doc.items) {
+    let n = nodes.get(it.id);
+    if (!n) { mount(it); n = nodes.get(it.id); }
+    if (!n) continue;
+    const on = t >= it.start - 0.001 && t < it.start + it.dur + 0.001;
+    n.el.style.display = on ? "" : "none";
+    if (!on) continue;
+    const ms = Math.max(0, (t - it.start + (it.anchor || 0)) * 1000);
+    if (n.canvas) {
+      try { n.preset.paint(n.canvas, ms / 1000 * (it.speed || 1), doc.meta.w, doc.meta.h, it); } catch (e) {}
+      continue;
+    }
+    for (const a of n.anims) {
+      try {
+        const dur = a.an.effect.getTiming().duration || 1;
+        a.an.currentTime = a.loop ? ms * (it.speed || 1) : Math.min(ms, dur);
+      } catch (e) {}
+    }
+  }
+  for (const id of [...nodes.keys()]) if (!doc.items.some(i => i.id === id)) unmount(id);
+  $("#time").textContent = (t.toFixed(1) + " / " + doc.meta.duration.toFixed(1));
+  $("#playhead").style.left = (t * dpps) + "px";
+}
+
+/* ============================================================ MUT ======= */
+let undoStack = [], redoStack = [], saveT = 0;
+const snapshot = () => JSON.stringify({ meta: doc.meta, tracks: doc.tracks, items: doc.items });
+function save() {
+  clearTimeout(saveT);
+  saveT = setTimeout(() => { try { localStorage.setItem("flowedit.v1", JSON.stringify(doc)); } catch (e) {} }, 250);
+}
+function mut(fn, undo = true) {
+  if (undo) { undoStack.push(snapshot()); if (undoStack.length > 60) undoStack.shift(); redoStack = []; }
+  fn(); save(); renderTimeline(); applyTime(playhead); paintInspector();
+}
+function applySnap(s) {
+  const d = JSON.parse(s);
+  doc.meta = d.meta; doc.tracks = d.tracks; doc.items = d.items;
+  for (const id of [...nodes.keys()]) unmount(id);
+  if (sel && !doc.items.some(i => i.id === sel)) sel = null;
+  save(); syncStage(); renderTimeline(); paintInspector();
+}
+function undo() { if (!undoStack.length) return toast("нічого скасовувати"); redoStack.push(snapshot()); applySnap(undoStack.pop()); }
+function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); applySnap(redoStack.pop()); }
+
+/* ============================================================ FIT ======= */
+function fit() {
+  if (EXP) return;
+  const main = $("#main"), wrap = $("#stageWrap");
+  const aw = main.clientWidth - 12, ah = main.clientHeight - 12;
+  if (aw <= 0 || ah <= 0) return;
+  const k = Math.min(aw / doc.meta.w, ah / doc.meta.h);
+  wrap.style.width = Math.round(doc.meta.w * k) + "px";
+  wrap.style.height = Math.round(doc.meta.h * k) + "px";
+  $("#stage").style.transform = `scale(${k})`;
+  $("#stage").style.background = doc.meta.bg;
+}
+function syncStage() {
+  for (const it of doc.items) mount(it);
+  applyTime(playhead);
+}
+
+/* ============================================================ TIMELINE == */
+function timelineEnd() {
+  return Math.max(5, ...doc.items.map(i => i.start + i.dur), playhead + 2);
+}
+function renderTimeline() {
+  const total = Math.max(doc.meta.duration, timelineEnd());
+  $("#tlInner").style.width = (total * dpps + 60) + "px";
+  let rh = "";
+  const step = dpps >= 90 ? .5 : 1;
+  for (let s = 0; s <= total + .01; s += step) {
+    const major = Math.abs(s % 5) < .001;
+    rh += `<i class="${major ? "maj" : ""}" style="left:${s * dpps}px"></i>`;
+    if (major && s > 0) rh += `<span style="left:${s * dpps}px">${s}с</span>`;
+  }
+  $("#ruler").innerHTML = rh;
+  $("#track").innerHTML = doc.items.map(it => {
+    const p = REG[it.type];
+    return `<div class="clip ${it.id === sel ? "sel" : ""}" data-id="${it.id}"
+      style="left:${it.start * dpps}px;width:${Math.max(18, it.dur * dpps)}px">
+      <div class="nm">${esc(p ? p.name : it.type)}</div>
+      <div class="du">${it.dur.toFixed(1)}с</div>
+      <div class="grip"></div></div>`;
+  }).join("");
+  $("#tlInfo").textContent = doc.items.length + " ел. · " + total.toFixed(1) + "с";
+  $("#hdur").textContent = doc.meta.duration.toFixed(1) + " с";
+  $("#playhead").style.left = (playhead * dpps) + "px";
+}
+function seek(t) {
+  playhead = clamp(t, 0, Math.max(doc.meta.duration, timelineEnd()));
+  applyTime(playhead);
+  const sc = $("#tlScroll"), x = playhead * dpps;
+  if (x < sc.scrollLeft + 20 || x > sc.scrollLeft + sc.clientWidth - 40) sc.scrollLeft = Math.max(0, x - sc.clientWidth * .4);
+}
+
+/* drag кліпів */
+let drag = null;
+$("#track").addEventListener("pointerdown", e => {
+  const clip = e.target.closest(".clip");
+  if (!clip) {
+    const rect = $("#tlInner").getBoundingClientRect();
+    return seek((e.clientX - rect.left) / dpps);
+  }
+  const it = doc.items.find(i => i.id === clip.dataset.id);
+  if (!it) return;
+  sel = it.id; paintInspector(); renderTimeline();
+  drag = { id: it.id, mode: e.target.classList.contains("grip") ? "resize" : "move",
+           x0: e.clientX, s0: it.start, d0: it.dur, snap: snapshot(), moved: false };
+  try { clip.setPointerCapture(e.pointerId); } catch (err) {}
+  e.preventDefault();
+});
+window.addEventListener("pointermove", e => {
+  if (!drag) return;
+  const dx = (e.clientX - drag.x0) / dpps;
+  if (Math.abs(dx) > .02) drag.moved = true;
+  const it = doc.items.find(i => i.id === drag.id);
+  if (!it) return;
+  if (drag.mode === "move") it.start = Math.max(0, Math.round((drag.s0 + dx) * 10) / 10);
+  else it.dur = Math.max(.3, Math.round((drag.d0 + dx) * 10) / 10);
+  renderTimeline(); applyTime(playhead);
+});
+window.addEventListener("pointerup", () => {
+  if (!drag) return;
+  if (drag.moved) {
+    undoStack.push(drag.snap); if (undoStack.length > 60) undoStack.shift(); redoStack = [];
+    save(); paintInspector();
+  }
+  drag = null; renderTimeline();
+});
+$("#ruler").addEventListener("pointerdown", e => {
+  const rect = $("#tlInner").getBoundingClientRect();
+  seek((e.clientX - rect.left) / dpps);
+  const move = ev => seek((ev.clientX - rect.left) / dpps);
+  const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+  window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+});
+
+/* ============================================================ INSPECTOR = */
+const LABEL = { x:"X, %", y:"Y, %", w:"Ширина, %", h:"Висота, %", alpha:"Прозорість", speed:"Швидкість",
+  color:"Колір", color2:"Другий колір", text:"Текст", size:"Розмір", weight:"Товщина", spacing:"Трекінг",
+  count:"Кількість", start:"Початок, с", dur:"Тривалість, с", rot:"Поворот, °", blur:"Розмиття",
+  align:"Вирівнювання", shadow:"Світіння тексту", shape:"Форма", bar:"Товщина", dir:"Напрямок" };
+const RANGE = { x:[0,100,.5], y:[0,100,.5], w:[2,140,.5], h:[1,140,.5], alpha:[0,1,.02], speed:[.2,4,.05],
+  size:[12,220,1], spacing:[-.02,.3,.005], count:[4,140,1], start:[0,600,.1], dur:[.3,120,.1],
+  rot:[-180,180,1], blur:[0,30,.5], shadow:[0,90,1], bar:[3,45,1], "size#dot":[.3,4,.05] };
+const SEL = {
+  align: [["center","по центру"],["left","ліво"],["right","право"]],
+  shape: [["latin","простий"],["orthodox","православний"]],
+  dir:   [["1","за годинниковою"],["-1","проти годинникової"]]
+};
+const REMOUNT = ["text","size","weight","spacing","color","x","y","w","h","alpha","count","dur","speed"];
+let insOpen = false;
+
+function paintInspector() {
+  const box = $("#inspector");
+  const it = doc.items.find(i => i.id === sel);
+  if (!it) {
+    if (insOpen) { box.classList.remove("on"); box.innerHTML = ""; insOpen = false; fit(); }
+    return;
+  }
+  const p = REG[it.type];
+  const fields = ["start", "dur", ...(p.fields || Object.keys(p.def)), "rot", "blur"];
+  box.classList.add("on");
+  box.innerHTML = `
+    <div class="insHead">
+      <span class="nm">${esc(p.name)}</span>
+      <span class="tag">${esc(p.group)} · ${it.start.toFixed(1)}–${(it.start + it.dur).toFixed(1)} с</span>
+      <span style="flex:1"></span><button class="ibtn" id="insClose">✕</button>
+    </div>
+    <div class="insGrid">${fields.map(k => field(it, k)).join("")}</div>`;
+  if (!insOpen) { insOpen = true; fit(); }
+  box.querySelectorAll("[data-k]").forEach(inp => {
+    inp.addEventListener("input", () => {
+      const k = inp.dataset.k;
+      let v = (inp.type === "range" || inp.type === "number") ? parseFloat(inp.value) : inp.value;
+      if (k === "dur") v = Math.max(.3, v);
+      if (k === "start") v = Math.max(0, v);
+      it[k] = v;
+      if (k === "dur" && !it.anchor) it.anim = v;
+      const b = inp.parentElement.querySelector("label b");
+      if (b && inp.type === "range") b.textContent = fmtVal(k, v);
+      if (k !== "start") { mount(it); applyTime(playhead); }   // усе, крім часу, міняє вигляд
+      renderTimeline(); save();
+    });
+  });
+  $("#insClose").onclick = () => { sel = null; paintInspector(); renderTimeline(); };
+}
+function fmtVal(k, v) {
+  if (k === "alpha" || k === "spacing") return Number(v).toFixed(2);
+  if (k === "start" || k === "dur") return Number(v).toFixed(1) + "с";
+  return String(Math.round(v * 10) / 10);
+}
+function field(it, k) {
+  const v = it[k];
+  if (k === "text") return `<div class="fld"><label>${LABEL[k]}</label><input type="text" data-k="text" value="${esc(v)}"></div>`;
+  if (k === "color" || k === "color2") return `<div class="fld"><label>${LABEL[k]}</label><input type="color" data-k="${k}" value="${esc(v)}"></div>`;
+  if (k === "weight") return `<div class="fld"><label>${LABEL[k]}</label><select data-k="weight">${
+    [200,300,400,600,800].map(w => `<option value="${w}" ${+v === w ? "selected" : ""}>${w}</option>`).join("")}</select></div>`;
+  if (SEL[k]) return `<div class="fld"><label>${LABEL[k]}</label><select data-k="${k}">${
+    SEL[k].map(([val,lab]) => `<option value="${val}" ${String(v) === val ? "selected" : ""}>${lab}</option>`).join("")}</select></div>`;
+  const rng = (k === "size" && it.count !== undefined) ? RANGE["size#dot"] : (RANGE[k] || [0,100,1]);
+  const [mn, mx, st] = rng;
+  return `<div class="fld"><label>${LABEL[k] || k}<b>${fmtVal(k, v)}</b></label>
+    <input type="range" data-k="${k}" min="${mn}" max="${mx}" step="${st}" value="${v}"></div>`;
+}
+
+/* ============================================================ PLAY ====== */
+let lastT = 0;
+setInterval(() => {
+  if (!playing) return;
+  const now = performance.now();
+  const dt = Math.min(.2, (now - lastT) / 1000); lastT = now;
+  playhead += dt;
+  if (playhead >= doc.meta.duration) { playhead = doc.meta.duration; stop(); }
+  applyTime(playhead);
+  const sc = $("#tlScroll"), x = playhead * dpps;
+  if (x > sc.scrollLeft + sc.clientWidth - 40) sc.scrollLeft = x - sc.clientWidth * .4;
+}, 33);
+function play() {
+  if (playhead >= doc.meta.duration - .01) playhead = 0;
+  playing = true; lastT = performance.now(); $("#play").textContent = "❚❚";
+}
+function stop() { playing = false; $("#play").textContent = "▶︎"; }
+
+/* ============================================================ LIBRARY === */
+function buildLibrary() {
+  const grid = $("#libGrid");
+  grid.innerHTML = Object.values(REG).map(p => `
+    <div class="card" data-add="${p.id}">
+      <div class="thumb"><div class="mini" data-mini="${p.id}"></div></div>
+      <div class="t">${esc(p.name)}</div><div class="g">${esc(p.group)}</div>
+    </div>`).join("");
+  requestAnimationFrame(() => buildThumbs());
+  setTimeout(buildThumbs, 60);            // rAF може бути приглушений — дублюємо таймером
+}
+let thumbsDone = false;
+function buildThumbs() {
+  const grid = $("#libGrid");
+  if (thumbsDone) return;
+  thumbsDone = true;
+  grid.querySelectorAll("[data-mini]").forEach(box => {
+      box.innerHTML = "";                     // без дублів при повторному відкритті
+      const id = box.dataset.mini, p = REG[id], thumb = box.parentElement;
+      const k = (thumb.clientWidth || 100) / W;
+      box.style.transform = `scale(${k})`;
+      const it = Object.assign({}, p.def, { id: "m" + id, type: id, start: 0, dur: 4, speed: 1,
+        alpha: Math.min(1, (p.def.alpha == null ? 1 : p.def.alpha) * 1.55) });   // прев'ю трохи яскравіше
+      try {
+        const el = buildItem(it);
+        box.appendChild(el);
+        if (p.kind === "canvas") {
+          const cv = el.querySelector("canvas"), c = cv.getContext("2d");
+          let f = 0;
+          setInterval(() => { if (!document.body.contains(cv)) return; try { p.paint(c, f += .06); } catch (e) {} }, 90);
+        } else if (p.anims) {
+          for (const a of p.anims(it)) {
+            const targets = a.each ? [...el.querySelectorAll(a.sel)] : [el.querySelector(a.sel)];
+            targets.forEach(tn => {
+              if (!tn) return;
+              const opt = Object.assign({ fill: "both", iterations: a.loop ? Infinity : 1 }, a.opt);
+              try {
+                const an = animateNode(tn, a, opt.delay);
+                an.pause();
+                const dur = an.effect.getTiming().duration || 1000;
+                an.currentTime = (a.loop ? .3 : .38) * dur;   // статичний «гарний» кадр
+              } catch (e) {}
+            });
+          }
+        }
+      } catch (e) { console.warn("preview", id, e); }
+  });
+}
+$("#addBtn").onclick = () => {
+  $("#lib").classList.add("on");
+  buildLibrary();                     // картки (у видимому модалі → відомі розміри)
+  thumbsDone = false;
+  buildThumbs();                      // живі прев'ю
+};
+$("#libClose").onclick = () => $("#lib").classList.remove("on");
+$("#libGrid").addEventListener("click", e => {
+  const card = e.target.closest("[data-add]");
+  if (!card) return;
+  addItem(card.dataset.add);
+  $("#lib").classList.remove("on");
+});
+function addItem(type) {
+  const p = REG[type];
+  const it = Object.assign({}, p.def, {
+    id: uid(), type, track: doc.tracks[0].id, start: Math.round(playhead * 10) / 10,
+    dur: p.def.dur || 4, anim: p.def.dur || 4, anchor: 0
+  });
+  mut(() => { doc.items.push(it); extend(it.start + it.dur); });
+  sel = it.id; paintInspector(); renderTimeline(); applyTime(playhead);
+  toast("додано: " + p.name);
+}
+function extend(end) { if (end > doc.meta.duration) doc.meta.duration = Math.ceil(end / 5) * 5; }
+
+/* ============================================================ ACTIONS === */
+$("#play").onclick = () => (playing ? stop() : play());
+$("#toStart").onclick = () => { stop(); seek(0); };
+$("#toEnd").onclick = () => { stop(); seek(Math.max(...doc.items.map(i => i.start + i.dur), 0)); };
+$("#undo").onclick = undo;
+$("#redo").onclick = redo;
+$("#dupBtn").onclick = () => {
+  const it = doc.items.find(i => i.id === sel);
+  if (!it) return toast("вибери елемент на таймлайні");
+  const copy = Object.assign({}, it, { id: uid(), start: Math.round((it.start + it.dur) * 10) / 10 });
+  mut(() => { doc.items.push(copy); extend(copy.start + copy.dur); });
+  sel = copy.id; paintInspector(); renderTimeline(); applyTime(playhead);
+};
+$("#splitBtn").onclick = () => {
+  const it = doc.items.find(i => i.id === sel);
+  if (!it) return toast("вибери елемент на таймлайні");
+  const t = playhead;
+  if (t <= it.start + .05 || t >= it.start + it.dur - .05)
+    return toast("постав курсор усередині кліпа");
+  const cut = Math.round(t * 10) / 10;
+  const right = Object.assign({}, it, {
+    id: uid(),
+    start: cut,
+    dur: Math.round((it.start + it.dur - t) * 10) / 10,
+    anchor: (it.anchor || 0) + (t - it.start)      // анімація продовжується з того ж місця
+  });
+  const leftDur = Math.round((t - it.start) * 10) / 10;
+  mut(() => { it.dur = leftDur; doc.items.push(right); });
+  sel = right.id; paintInspector(); renderTimeline(); applyTime(playhead);
+  toast("розрізано на " + cut.toFixed(1) + " с");
+};
+$("#delBtn").onclick = () => {
+  if (!sel) return toast("вибери елемент");
+  mut(() => { doc.items = doc.items.filter(i => i.id !== sel); });
+  sel = null; paintInspector(); renderTimeline(); applyTime(playhead);
+};
+$("#fitBtn").onclick = () => {
+  dpps = clamp($("#tlScroll").clientWidth / Math.max(5, timelineEnd()), 12, 150);
+  $("#zoom").value = dpps; renderTimeline(); seek(playhead);
+};
+$("#zoom").oninput = e => { dpps = +e.target.value; renderTimeline(); seek(playhead); };
+$("#title").oninput = e => { doc.meta.title = e.target.value; save(); };
+$("#menu").onclick = () => $("#projModal").classList.add("on");
+$("#projClose").onclick = () => $("#projModal").classList.remove("on");
+$("#expJson").onclick = () => {
+  const blob = new Blob([JSON.stringify(doc, null, 1)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = (doc.meta.title || "flow-project").replace(/\s+/g, "-") + ".json";
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast("JSON збережено");
+};
+$("#copyJson").onclick = async () => {
+  try { await navigator.clipboard.writeText(JSON.stringify(doc)); toast("JSON у буфері"); }
+  catch (e) { toast("браузер не дав доступ"); }
+};
+$("#impJson").onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const fr = new FileReader();
+  fr.onload = () => {
+    try {
+      const d = JSON.parse(fr.result);
+      if (!Array.isArray(d.items)) throw new Error("немає items");
+      doc.meta = Object.assign(newDoc().meta, d.meta || {});
+      doc.items = d.items;
+      doc.tracks = d.tracks || [{ id: "v1", name: "Сцена" }];
+      sel = null; for (const id of [...nodes.keys()]) unmount(id);
+      $("#title").value = doc.meta.title; $("#projModal").classList.remove("on");
+      save(); syncStage(); renderTimeline(); paintInspector(); fit();
+      toast("проєкт відкрито");
+    } catch (err) { toast("поганий JSON"); }
+  };
+  fr.readAsText(f);
+};
+$("#clearAll").onclick = () => {
+  if (!confirm("Очистити весь проєкт?")) return;
+  mut(() => { doc.items = []; doc.meta.duration = 20; });
+  sel = null; paintInspector(); syncStage(); renderTimeline();
+  $("#projModal").classList.remove("on");
+};
+
+/* ============================================================ EXPORT ==== */
+/* Сторінка може лежати де завгодно (у т.ч. GitHub Pages) — тоді експорт
+   іде на серверний бекенд. На самому flow-edit — той самий origin. */
+const API = /(^|\.)flow-edit\./.test(location.hostname)
+  ? "" : "https://flow-edit.116-203-217-173.sslip.io";
+let expPoll = 0;
+
+$("#expBtn").onclick = () => {
+  $("#expModal").classList.add("on");
+  $("#expDur").textContent = "· проєкт " + doc.meta.duration.toFixed(1) + " с";
+};
+$("#expClose").onclick = () => $("#expModal").classList.remove("on");
+
+async function exportStart(w, h) {
+  const fps = +$("#expFps").value;
+  $("#expErr").textContent = ""; $("#expLink").innerHTML = "";
+  $("#expBar").style.width = "0%";
+  $("#expStatus").textContent = "ставлю в чергу…";
+  const payload = JSON.stringify({
+    doc: { version: VERSION, meta: doc.meta, tracks: doc.tracks, items: doc.items }, w, h, fps
+  });
+  try {
+    const r = await fetch(API + "/api/export", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: payload
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.id) throw new Error(j.error || ("HTTP " + r.status));
+    $("#expStatus").textContent = "рендер пішов…";
+    clearInterval(expPoll);
+    expPoll = setInterval(() => expCheck(j.id, w, h), 2000);
+    expCheck(j.id, w, h);
+  } catch (e) {
+    $("#expErr").textContent = "не запустилось: " + (e.message || e);
+    $("#expStatus").textContent = "помилка";
+  }
+}
+
+async function expCheck(id, w, h) {
+  try {
+    const r = await fetch(API + "/api/status/" + id, { cache: "no-store" });
+    const s = await r.json();
+    if (s.state === "rendering") {
+      const pc = Math.round(100 * (s.frame || 0) / Math.max(1, s.total || 1));
+      $("#expBar").style.width = pc + "%";
+      const eta = s.eta ? Math.round(s.eta / 60) + " хв" : "…";
+      $("#expStatus").textContent = `рендер ${pc}% · кадр ${s.frame}/${s.total} · лишилось ≈${eta}`;
+    } else if (s.state === "done" && s.video) {
+      $("#expBar").style.width = "100%";
+      clearInterval(expPoll);
+      $("#expStatus").textContent = `готово · ${w}×${h} · ${(s.size / 1048576).toFixed(1)} МБ`;
+      $("#expLink").innerHTML =
+        `<a href="${API}${s.video}" target="_blank" style="color:var(--acc);font-size:14px">▶︎ відкрити відео</a>`;
+    } else if (s.state === "error") {
+      clearInterval(expPoll);
+      $("#expStatus").textContent = "помилка рендера";
+      $("#expErr").textContent = s.msg || s.log || "дивись лог на сервері";
+    }
+  } catch (e) { /* мережа — наступний тік */ }
+}
+$("#expDraft").onclick = () => exportStart(540, 960);
+$("#expFinal").onclick = () => exportStart(1080, 1920);
+
+document.addEventListener("keydown", e => {
+  const tag = (e.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select") return;
+  if (e.code === "Space") { e.preventDefault(); playing ? stop() : play(); }
+  else if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); $("#delBtn").click(); }
+  else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+  else if (e.key === "ArrowRight") { stop(); seek(playhead + (e.shiftKey ? 1 : .1)); }
+  else if (e.key === "ArrowLeft") { stop(); seek(playhead - (e.shiftKey ? 1 : .1)); }
+});
+window.addEventListener("resize", () => { if (!EXP) fit(); });
+
+/* ============================================================ INIT ====== */
+function boot() {
+  $("#title").value = doc.meta.title;
+  fit(); syncStage(); renderTimeline(); applyTime(0);
+  if (!EXP) setInterval(fit, 1500);    // страхівка від зміни висоти (адресна панель на телефоні)
+}
+boot();
+
+window.FLOW = {
+  doc, REG, applyTime, seek, addItem, play, stop, mount, unmount,
+  setTime(t) { stop(); applyTime(t); },
+  loadDoc(d) {
+    doc.meta = Object.assign(newDoc().meta, d.meta || {});
+    doc.items = (d.items || []).map(it => Object.assign({}, it));
+    doc.tracks = d.tracks || [{ id: "v1", name: "Сцена" }];
+    sel = null;
+    for (const id of [...nodes.keys()]) unmount(id);
+    $("#title").value = doc.meta.title;
+    syncStage(); renderTimeline(); applyTime(0);
+  },
+  exportMode(on) { document.body.classList.toggle("export", !!on); },
+  get duration() { return doc.meta.duration; },
+  get playhead() { return playhead; },
+  get sel() { return sel; },
+  set sel(v) { sel = v; paintInspector(); renderTimeline(); }
+};
+})();
+</script>
+</body>
+</html>
