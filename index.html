@@ -338,7 +338,7 @@ function normItem(raw, defTrack) {
   if ("color2" in d) it.color2 = safeColor(it.color2, d.color2 || it.color);
   if ("text" in d) it.text = String(it.text == null ? "" : it.text).slice(0, 400);
   it.css = String(it.css == null ? "" : it.css).slice(0, 2000)
-    .replace(/[<>]/g, "").replace(/url\s*\(/gi, "").replace(/expression\s*\(/gi, "")
+    .replace(/[<>{}]/g, "").replace(/url\s*\(/gi, "").replace(/expression\s*\(/gi, "")
     .replace(/javascript:/gi, "").replace(/@import/gi, "");
   if ("align" in d) it.align = safeEnum(it.align, ["center", "left", "right"], d.align || "center");
   if ("shape" in d) it.shape = safeEnum(it.shape, ["latin", "orthodox"], d.shape || "latin");
@@ -798,10 +798,10 @@ function buildItem(it) {
   const zi = doc.tracks.findIndex(t => t.id === it.track);
   el.style.zIndex = String((zi < 0 ? 0 : zi) + 1);
   el.innerHTML = `<div class="el">${p.node(it)}</div>`;
-  if (it.css) {
-    const inner = el.firstElementChild;
-    inner.setAttribute("style", (inner.getAttribute("style") || "") + ";" + it.css);
-  }
+  const fx = "fx-" + it.id.replace(/[^A-Za-z0-9_-]/g, "");
+  el.classList.add(fx);
+  if (it.css) { fxRules.set(fx, it.css); } else { fxRules.delete(fx); }
+  applyFxRules();
   return el;
 }
 
@@ -822,6 +822,7 @@ function animateNode(node, a, delay) {
 
 function mount(it) {
   unmount(it.id);
+  fxRules.delete("fx-" + String(it.id).replace(/[^A-Za-z0-9_-]/g, ""));
   let el;
   try { el = buildItem(it); } catch (e) { console.warn("mount", it.type, e); return; }
   $("#stage").appendChild(el);
@@ -854,6 +855,20 @@ function mount(it) {
   }
   nodes.set(it.id, { el, anims, preset: p });
 }
+const fxRules = new Map();
+function applyFxRules() {
+  let st = document.getElementById("fxstyles");
+  if (!st) { st = document.createElement("style"); st.id = "fxstyles"; document.head.appendChild(st); }
+  for (const k of [...fxRules.keys()]) {
+    if (!document.querySelector("." + k)) fxRules.delete(k);
+  }
+  const imp = css => css.split(";").map(d => d.trim()).filter(Boolean)
+    .map(d => d.includes(":") ? d + " !important" : d).join(";");
+  st.textContent = [...fxRules.entries()]
+    .map(([k, css]) => `.${k}, .${k} .el, .${k} .el > *, .${k} .el > * > * {${imp(css)}}`)
+    .join("\n");
+}
+
 function unmount(id) {
   const n = nodes.get(id);
   if (!n) return;
