@@ -148,6 +148,7 @@
   <header>
     <span class="logo">FLOW</span>
     <input class="title" id="title" value="Без назви" spellcheck="false">
+    <span class="ver" id="ver" title="версія збірки">v—</span>
     <span class="t" id="hdur">0.0 с</span>
     <button class="ibtn" id="undo" title="Скасувати">↶</button>
     <button class="ibtn" id="redo" title="Повторити">↷</button>
@@ -188,6 +189,7 @@
       <button class="ibtn" id="dupBtn">⧉ Дубль</button>
       <button class="ibtn" id="splitBtn">✂ Різати</button>
       <button class="ibtn" id="addAudioBtn">♪ Звук</button>
+      <button class="ibtn" id="gearBtn" title="Налаштування кліпа">⚙</button>
       <input type="file" id="audioFile" accept="audio/*" hidden>
       <button class="ibtn" id="delBtn">🗑 Видалити</button>
       <span style="flex:1"></span>
@@ -332,6 +334,9 @@ function normItem(raw, defTrack) {
   if ("color" in d) it.color = safeColor(it.color, d.color || "#ffffff");
   if ("color2" in d) it.color2 = safeColor(it.color2, d.color2 || it.color);
   if ("text" in d) it.text = String(it.text == null ? "" : it.text).slice(0, 400);
+  it.css = String(it.css == null ? "" : it.css).slice(0, 2000)
+    .replace(/[<>]/g, "").replace(/url\s*\(/gi, "").replace(/expression\s*\(/gi, "")
+    .replace(/javascript:/gi, "").replace(/@import/gi, "");
   if ("align" in d) it.align = safeEnum(it.align, ["center", "left", "right"], d.align || "center");
   if ("shape" in d) it.shape = safeEnum(it.shape, ["latin", "orthodox"], d.shape || "latin");
   if ("dir" in d) it.dir = (+it.dir < 0) ? -1 : 1;
@@ -787,6 +792,10 @@ function buildItem(it) {
   const zi = doc.tracks.findIndex(t => t.id === it.track);
   el.style.zIndex = String((zi < 0 ? 0 : zi) + 1);
   el.innerHTML = `<div class="el">${p.node(it)}</div>`;
+  if (it.css) {
+    const inner = el.firstElementChild;
+    inner.setAttribute("style", (inner.getAttribute("style") || "") + ";" + it.css);
+  }
   return el;
 }
 
@@ -966,7 +975,21 @@ function renderTimeline() {
 
   $("#tlInfo").textContent = doc.items.length + " ел. · " + doc.tracks.length + " дор. · " + total.toFixed(1) + "с";
   $("#hdur").textContent = doc.meta.duration.toFixed(1) + " с";
+  const v = $("#ver");
+  if (v && v.dataset.set !== "1") { v.textContent = "v" + ("0.7").toString(); v.dataset.set = "1"; }
   $("#playhead").style.left = (TL_X0 + playhead * dpps) + "px";
+}
+
+let lastTap = { id: 0, t: 0 };
+function openInspector() {
+  if (!sel) return toast("спершу вибери кліп");
+  paintInspector();
+}
+function closeInspector() {
+  if (!insOpen) return;
+  insOpen = false;
+  const box = $("#inspector");
+  box.classList.remove("on"); box.innerHTML = "";
 }
 
 function seek(t) {
@@ -1000,7 +1023,11 @@ $("#track").addEventListener("pointerdown", e => {
   }
   const it = doc.items.find(i => i.id === clip.dataset.id);
   if (!it) return;
-  sel = it.id; activeTrack = it.track; paintInspector(); renderTimeline();
+  sel = it.id; activeTrack = it.track; renderTimeline();
+  // подвійний тап по кліпу = відкрити налаштування; одиничний — тільки вибір і перетягування
+  const now = performance.now();
+  if (lastTap.id === it.id && now - lastTap.t < 380) { openInspector(); lastTap = { id: 0, t: 0 }; }
+  else lastTap = { id: it.id, t: now };
   const row = clip.closest(".trow").getBoundingClientRect();
   drag = { id: it.id, mode: e.target.classList.contains("grip") ? "resize" : "move",
            x0: e.clientX, y0: e.clientY, rowTop: row.top, s0: it.start, d0: it.dur,
@@ -1068,7 +1095,7 @@ const LABEL = {
   spin: "Обертів/с", strength: "Сила", rise: "Підйом, px", spread: "Розкид", twinkle: "Мерехтіння",
   drift: "Дрейф, px", arms: "Рукавів", sharp: "Різкість", expand: "Розширення", blobs: "Плям",
   thick: "Товщина, px", glow: "Світіння, px", intensity: "Інтенсивність", px: "Зерно, px",
-  arm: "Довжина перекладини", armPos: "Позиція перекладини"
+  arm: "Довжина перекладини", armPos: "Позиція перекладини", css: "Свій CSS"
 };
 const RANGE = {
   x: [0, 100, .5], y: [0, 100, .5], w: [1, 300, .5], h: [1, 300, .5], alpha: [0, 1, .02],
@@ -1106,7 +1133,8 @@ function paintInspector() {
   const used = new Set();
   const secs = [["Час", ["start", "dur", "speed"]],
                 ...(p.sections || [["Параметри", p.fields || Object.keys(p.def)]]),
-                ["Положення", ["x", "y", "w", "h", "rot", "blur", "alpha"]]];
+                ["Положення", ["x", "y", "w", "h", "rot", "blur", "alpha"]],
+                ["Свій CSS (тонко)", ["css"]]];
   const body = secs.map(([title, keys]) => {
     const ks = keys.filter(k => { if (used.has(k)) return false; used.add(k); return true; });
     if (!ks.length) return "";
@@ -1153,6 +1181,9 @@ function field(it, k) {
   const v = bad ? 0 : it[k];
   if (k === "text") return `<div class="fld wide"><label>${LABEL[k]}</label>
     <textarea data-k="text" rows="3" spellcheck="false">${esc(v)}</textarea></div>`;
+  if (k === "css") return `<div class="fld wide"><label>${LABEL[k]}</label>
+    <textarea data-k="css" rows="3" spellcheck="false"
+      placeholder="filter: blur(8px); mix-blend-mode: screen; mask-image: radial-gradient(...)">${esc(v)}</textarea></div>`;
   if (k === "color" || k === "color2") return `<div class="fld"><label>${LABEL[k]}</label>
     <input type="color" data-k="${k}" value="${esc(v)}"></div>`;
   if (SEL[k]) return `<div class="fld"><label>${LABEL[k]}</label><select data-k="${k}">${
@@ -1531,6 +1562,8 @@ async function expCheck(id, w, h) {
     }
   } catch (e) { /* мережа — наступний тік */ }
 }
+$("#gearBtn").onclick = () => openInspector();
+
 $("#expDraft").onclick = () => exportStart(540, 960);
 $("#expFinal").onclick = () => exportStart(1080, 1920);
 
@@ -1544,6 +1577,10 @@ document.addEventListener("keydown", e => {
   else if (e.key === "ArrowLeft") { stop(); seek(playhead - (e.shiftKey ? 1 : .1)); }
 });
 window.addEventListener("resize", () => { if (!EXP) fit(); });
+
+/* тап по сцені закриває панель налаштувань */
+$("#stageWrap").addEventListener("pointerdown", () => closeInspector());
+/* stageClose */
 
 /* ============================================================ INIT ====== */
 function boot() {
