@@ -210,6 +210,9 @@
       <button class="ibtn" id="expJson">⬇ Зберегти JSON</button>
       <label class="ibtn" style="cursor:pointer">⬆ Відкрити JSON<input type="file" id="impJson" accept=".json" hidden></label>
       <button class="ibtn" id="copyJson">⧉ Скопіювати JSON</button>
+      <div class="fld"><label>Тривалість проєкту, с <b id="durNow"></b></label>
+        <input type="range" id="durField" min="1" max="120" step="0.5" value="20"></div>
+      <button class="ibtn" id="durFit">↕ До кінця вмісту</button>
       <button class="ibtn warn" id="clearAll">Очистити проєкт</button>
       <div style="font-size:11.5px;color:var(--mut);line-height:1.5">
         Проєкт зберігається в цьому браузері автоматично. JSON — для перенесення або архіву.
@@ -881,7 +884,7 @@ function applyTime(t) {
   }
   for (const id of [...nodes.keys()]) if (!doc.items.some(i => i.id === id)) unmount(id);
   $("#time").textContent = (t.toFixed(1) + " / " + doc.meta.duration.toFixed(1));
-  $("#playhead").style.left = (t * dpps) + "px";
+  $("#playhead").style.left = (TL_X0 + t * dpps) + "px";
 }
 
 /* ============================================================ MUT ======= */
@@ -932,7 +935,7 @@ const trackById = id => doc.tracks[trackIndex(id)] || doc.tracks[0];
 let activeTrack = (doc.tracks[doc.tracks.length - 1] || {}).id;
 
 function timelineEnd() {
-  return Math.max(5, ...doc.items.map(i => i.start + i.dur), playhead + 2);
+  return Math.max(playhead + 2, ...doc.items.map(i => i.start + i.dur), ...doc.audio.map(a => a.start + a.dur), 1);
 }
 
 function renderTimeline() {
@@ -976,6 +979,8 @@ function renderTimeline() {
   $("#track").innerHTML = tracksHtml + audioHtml;
   drawWaves();
 
+  const tlEl = document.querySelector(".tl");
+  if (tlEl) tlEl.style.height = (114 + (doc.tracks.length + 1) * ROW_H) + "px";
   $("#tlInfo").textContent = doc.items.length + " ел. · " + doc.tracks.length + " дор. · " + total.toFixed(1) + "с";
   $("#hdur").textContent = doc.meta.duration.toFixed(1) + " с";
   const v = $("#ver");
@@ -1079,7 +1084,7 @@ window.addEventListener("pointerup", () => {
   if (!drag) return;
   if (drag.moved) {
     undoStack.push(drag.snap); if (undoStack.length > 60) undoStack.shift(); redoStack = [];
-    save(); paintInspector();
+    save(); if (insOpen) paintInspector();
   }
   drag = null; renderTimeline();
 });
@@ -1180,7 +1185,7 @@ function paintInspector() {
       renderTimeline(); save();
     });
   });
-  $("#insClose").onclick = () => { sel = null; paintInspector(); renderTimeline(); };
+  $("#insClose").onclick = () => closeInspector();
 }
 
 function fmtVal(k, v) {
@@ -1290,14 +1295,19 @@ $("#libGrid").addEventListener("click", e => {
 function addItem(type) {
   const p = REG[type];
   const isText = type === "title" || type === "subtitle";
-  const tr = doc.tracks.find(t => t.name === (isText ? "Текст" : "Ефекти")) || trackById(activeTrack) || doc.tracks[0];
+  const tr = trackById(activeTrack) ||
+    doc.tracks.find(t => t.name === (isText ? "Текст" : "Ефекти")) || doc.tracks[0];
   const it = normItem(Object.assign({}, p.def, {
     id: uid(), type, track: tr.id, start: Math.round(playhead * 10) / 10,
     dur: p.def.dur || 4, anim: p.def.dur || 4, anchor: 0
   }));
   activeTrack = tr.id;
   mut(() => { doc.items.push(it); extend(it.start + it.dur); });
-  sel = it.id; paintInspector(); renderTimeline(); applyTime(playhead);
+  sel = it.id;
+  if (insOpen) paintInspector();
+  // показуємо елемент у момент, коли він уже проявився, інакше на t=0 він невидимий
+  playhead = Math.min(doc.meta.duration, it.start + Math.max(.25, (it.anim || it.dur) * .28));
+  renderTimeline(); applyTime(playhead); syncAudio(playhead, playing);
   toast("додано: " + p.name);
 }
 function extend(end) { if (end > doc.meta.duration) doc.meta.duration = Math.ceil(end / 5) * 5; }
@@ -1375,12 +1385,32 @@ $("#impJson").onchange = e => {
       doc.tracks = d.tracks || [{ id: "v1", name: "Сцена" }];
       const dropped = sanitizeDoc(doc);
       sel = null; for (const id of [...nodes.keys()]) unmount(id);
-      $("#title").value = doc.meta.title; $("#projModal").classList.remove("on");
+      $("#title").value = doc.meta.title;
+  syncDurUI(); $("#projModal").classList.remove("on");
       save(); syncStage(); renderTimeline(); paintInspector(); fit();
       toast(dropped ? "проєкт відкрито (пропущено " + dropped + ")" : "проєкт відкрито");
     } catch (err) { toast("поганий JSON"); }
   };
   fr.readAsText(f);
+};
+function syncDurUI() {
+  const f = $("#durField"), n = $("#durNow");
+  if (!f) return;
+  const end = Math.max(1, ...doc.items.map(i => i.start + i.dur), ...doc.audio.map(a => a.start + a.dur));
+  f.max = Math.max(120, Math.ceil(end + 10));
+  f.value = doc.meta.duration;
+  if (n) n.textContent = doc.meta.duration.toFixed(1) + " с";
+}
+$("#durField").oninput = e => {
+  doc.meta.duration = clamp(parseFloat(e.target.value) || 1, 1, 600);
+  $("#durNow").textContent = doc.meta.duration.toFixed(1) + " с";
+  save(); renderTimeline();
+};
+$("#durFit").onclick = () => {
+  const end = Math.max(1, ...doc.items.map(i => i.start + i.dur), ...doc.audio.map(a => a.start + a.dur));
+  doc.meta.duration = Math.round(end * 10) / 10;
+  syncDurUI(); save(); renderTimeline();
+  toast("тривалість: " + doc.meta.duration.toFixed(1) + " с");
 };
 $("#clearAll").onclick = () => {
   if (!confirm("Очистити весь проєкт?")) return;
@@ -1443,9 +1473,16 @@ function drawWaves() {
 function syncAudio(t, isPlaying) {
   for (const a of doc.audio) {
     let el = audioEls.get(a.id);
-    if (!el) { el = new Audio(a.src); el.preload = "auto"; audioEls.set(a.id, el); }
+    if (!el) {
+      const u = a.src.startsWith("/") ? API + a.src : a.src;
+      el = new Audio(u); el.preload = "auto"; audioEls.set(a.id, el);
+    }
     const active = t >= a.start - .02 && t < a.start + a.dur;
-    el.volume = clamp(a.gain == null ? 1 : a.gain, 0, 1);
+    let g = a.gain == null ? 1 : a.gain;
+    const lt = t - a.start;
+    if (a.fadeIn > 0 && lt < a.fadeIn) g *= Math.max(0, lt / a.fadeIn);
+    if (a.fadeOut > 0 && lt > a.dur - a.fadeOut) g *= Math.max(0, (a.dur - lt) / a.fadeOut);
+    el.volume = clamp(g, 0, 1);
     if (!active) { if (!el.paused) el.pause(); continue; }
     const local = Math.max(0, t - a.start + (a.offset || 0));
     if (Math.abs(el.currentTime - local) > .3) { try { el.currentTime = local; } catch (e) {} }
@@ -1499,7 +1536,7 @@ function paintAudioInspector(a) {
       ${fld("offset", "Зсув у файлі, с", a.offset, 0, Math.max(10, a.dur), .1)}
     </div></div>
     <div class="sec"><div class="secT">Звук</div><div class="insGrid">
-      ${fld("gain", "Гучність", a.gain, 0, 1.5, .02)}
+      ${fld("gain", "Гучність", a.gain, 0, 1, .02)}
       ${fld("fadeIn", "Плавний вхід, с", a.fadeIn, 0, 10, .1)}
       ${fld("fadeOut", "Плавний вихід, с", a.fadeOut, 0, 10, .1)}
     </div></div>`;
@@ -1514,7 +1551,7 @@ function paintAudioInspector(a) {
       renderTimeline(); save();
     });
   });
-  $("#insClose").onclick = () => { sel = null; paintInspector(); renderTimeline(); };
+  $("#insClose").onclick = () => closeInspector();
 }
 
 /* ============================================================ EXPORT ==== */
