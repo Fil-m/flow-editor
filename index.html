@@ -41,7 +41,7 @@
   header input.title:focus{outline:1px solid var(--line);background:var(--panel2)}
   header .t{font-variant-numeric:tabular-nums;color:var(--mut);font-size:12px;flex:0 0 auto}
   .ibtn{appearance:none;border:1px solid var(--line);background:var(--panel2);color:var(--txt);
-    height:32px;min-width:32px;padding:0 9px;border-radius:9px;font:inherit;font-size:13px;
+    height:40px;min-width:40px;padding:0 11px;border-radius:10px;font:inherit;font-size:13.5px;
     display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:0 0 auto}
   .ibtn:active{transform:scale(.97)}
   .ibtn.acc{background:var(--acc);color:#04110e;border-color:transparent;font-weight:600}
@@ -99,14 +99,14 @@
     font-size:8.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);
     background:var(--panel);border-right:1px solid var(--line);cursor:pointer}
   .tname.on{color:var(--acc);background:#0f2430}
-  .clip{position:absolute;top:3px;height:26px;border-radius:7px;border:1px solid rgba(94,224,200,.35);
+  .clip{position:absolute;top:2px;height:28px;border-radius:7px;border:1px solid rgba(94,224,200,.35);
     background:linear-gradient(180deg,rgba(94,224,200,.18),rgba(94,224,200,.07));overflow:hidden;cursor:grab;touch-action:none}
   .clip.sel{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset,0 6px 18px -8px var(--acc)}
   .clip .nm{position:absolute;left:6px;top:5px;right:14px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .clip .du{display:none}
   .clip .grip{position:absolute;right:0;top:0;width:12px;height:100%;cursor:ew-resize;background:linear-gradient(90deg,transparent,rgba(255,255,255,.16))}
   .arow .tname{color:#ffcf94}
-  .aclip{position:absolute;top:3px;height:26px;border-radius:7px;overflow:hidden;cursor:grab;touch-action:none;
+  .aclip{position:absolute;top:2px;height:28px;border-radius:7px;overflow:hidden;cursor:grab;touch-action:none;
     background:rgba(255,180,106,.13);border:1px solid rgba(255,180,106,.45)}
   .aclip.sel{border-color:#ffb46a;box-shadow:0 0 0 1px #ffb46a inset}
   .aclip .wav{position:absolute;inset:0;width:100%;height:100%;opacity:.85;pointer-events:none}
@@ -922,7 +922,7 @@ function syncStage() {
 
 /* ============================================================ TIMELINE == */
 const TL_X0 = 56;          // ширина колонки з назвами доріжок
-const ROW_H = 32;
+const ROW_H = 34;
 
 const trackIndex = id => Math.max(0, doc.tracks.findIndex(t => t.id === id));
 const trackById = id => doc.tracks[trackIndex(id)] || doc.tracks[0];
@@ -1029,9 +1029,14 @@ $("#track").addEventListener("pointerdown", e => {
   if (lastTap.id === it.id && now - lastTap.t < 380) { openInspector(); lastTap = { id: 0, t: 0 }; }
   else lastTap = { id: it.id, t: now };
   const row = clip.closest(".trow").getBoundingClientRect();
+  const cands = [0, Math.round(playhead * 10) / 10];
+  for (const other of doc.items) {
+    if (other.id === it.id) continue;
+    cands.push(other.start, other.start + other.dur);
+  }
   drag = { id: it.id, mode: e.target.classList.contains("grip") ? "resize" : "move",
            x0: e.clientX, y0: e.clientY, rowTop: row.top, s0: it.start, d0: it.dur,
-           t0: it.track, snap: snapshot(), moved: false };
+           t0: it.track, snap: snapshot(), moved: false, cands };
   try { clip.setPointerCapture(e.pointerId); } catch (err) {}
   e.preventDefault();
 });
@@ -1063,7 +1068,7 @@ window.addEventListener("pointermove", e => {
       }
     }
   } else {
-    it.dur = Math.max(.3, Math.round((drag.d0 + dx) * 10) / 10);
+    it.dur = Math.max(.3, snapTo(drag.d0 + dx) - it.start);
   }
   renderTimeline(); applyTime(playhead);
 });
@@ -1601,7 +1606,7 @@ boot();
 
 window.FLOW = {
   doc, REG, applyTime, seek, addItem, play, stop, mount, unmount,
-  normItem, sanitizeDoc,                                         // для QA/тестів
+  normItem, sanitizeDoc, renderTimeline, paintInspector,         // для QA/тестів
   setTime(t) { stop(); applyTime(t); },
   loadDoc(d) {
     doc.meta = Object.assign(newDoc().meta, d.meta || {});
