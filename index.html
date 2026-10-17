@@ -58,8 +58,18 @@
   .transport .time{font-variant-numeric:tabular-nums;font-size:12px;color:var(--mut);min-width:92px;text-align:center}
   .transport .spacer{flex:1}
 
-  #inspector{background:var(--panel2);border-top:1px solid var(--line);padding:9px 10px;max-height:26dvh;overflow:auto;display:none}
+  #inspector{position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--panel2);
+    border-top:1px solid var(--line);border-radius:16px 16px 0 0;padding:10px 10px calc(10px + env(safe-area-inset-bottom));
+    max-height:56dvh;overflow:auto;display:none;box-shadow:0 -18px 40px rgba(0,0,0,.55)}
   #inspector.on{display:block}
+  .sec{margin-bottom:10px}
+  .secT{display:flex;align-items:center;gap:8px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--mut);margin:8px 0 6px}
+  .secT::after{content:"";flex:1;height:1px;background:var(--line)}
+  .fld.wide{grid-column:1/-1}
+  .fld textarea{background:var(--panel);border:1px solid var(--line);color:var(--txt);font:inherit;font-size:13px;
+    padding:8px 9px;border-radius:9px;width:100%;min-height:64px;resize:vertical}
+  input,textarea,select{-webkit-user-select:text;user-select:text}
   .insGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(146px,1fr));gap:8px}
   .fld{display:grid;gap:3px}
   .fld label{font-size:11px;color:var(--mut);display:flex;justify-content:space-between;gap:6px}
@@ -72,7 +82,7 @@
   .insHead .nm{font-size:13px;font-weight:600}
   .insHead .tag{font-size:11px;color:var(--mut)}
 
-  .tl{background:var(--panel);border-top:1px solid var(--line);height:140px;display:grid;grid-template-rows:auto 1fr auto}
+  .tl{background:var(--panel);border-top:1px solid var(--line);height:190px;display:grid;grid-template-rows:auto 1fr auto}
   .tlbar{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--line)}
   .tlbar .lbl{font-size:11px;color:var(--mut)}
   .tlbar input[type=range]{width:100px;accent-color:var(--acc)}
@@ -83,13 +93,18 @@
   .ruler i{position:absolute;top:0;width:1px;background:rgba(255,255,255,.14);height:6px}
   .ruler i.maj{height:11px;background:rgba(255,255,255,.3)}
   .ruler span{position:absolute;top:5px;font-size:10px;color:var(--mut);transform:translateX(2px)}
-  .track{position:relative;height:62px;margin-top:6px}
-  .clip{position:absolute;top:0;height:58px;border-radius:8px;border:1px solid rgba(94,224,200,.35);
-    background:linear-gradient(180deg,rgba(94,224,200,.16),rgba(94,224,200,.06));overflow:hidden;cursor:grab;touch-action:none}
+  .track{position:relative;margin-top:4px}
+  .trow{position:relative;border-top:1px solid rgba(255,255,255,.05)}
+  .tname{position:sticky;left:0;z-index:4;width:52px;height:100%;display:flex;align-items:center;justify-content:center;
+    font-size:8.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);
+    background:var(--panel);border-right:1px solid var(--line);cursor:pointer}
+  .tname.on{color:var(--acc);background:#0f2430}
+  .clip{position:absolute;top:3px;height:26px;border-radius:7px;border:1px solid rgba(94,224,200,.35);
+    background:linear-gradient(180deg,rgba(94,224,200,.18),rgba(94,224,200,.07));overflow:hidden;cursor:grab;touch-action:none}
   .clip.sel{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset,0 6px 18px -8px var(--acc)}
-  .clip .nm{position:absolute;left:7px;top:6px;right:16px;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .clip .du{position:absolute;left:7px;bottom:6px;font-size:10px;color:var(--mut);font-variant-numeric:tabular-nums}
-  .clip .grip{position:absolute;right:0;top:0;width:14px;height:100%;cursor:ew-resize;background:linear-gradient(90deg,transparent,rgba(255,255,255,.16))}
+  .clip .nm{position:absolute;left:6px;top:5px;right:14px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .clip .du{display:none}
+  .clip .grip{position:absolute;right:0;top:0;width:12px;height:100%;cursor:ew-resize;background:linear-gradient(90deg,transparent,rgba(255,255,255,.16))}
   .playhead{position:absolute;top:0;bottom:0;width:2px;background:var(--acc2);pointer-events:none;box-shadow:0 0 8px var(--acc2)}
   .playhead::before{content:"";position:absolute;top:0;left:-5px;border-left:6px solid transparent;
     border-right:6px solid transparent;border-top:7px solid var(--acc2)}
@@ -236,7 +251,7 @@ function newDoc() {
   return {
     version: VERSION,
     meta: { title: "Без назви", w: W, h: H, fps: 30, duration: 20, bg: "#05060d" },
-    tracks: [{ id: "v1", name: "Сцена" }],
+    tracks: [{ id: "v1", name: "Фон" }, { id: "v2", name: "Ефекти" }, { id: "v3", name: "Текст" }],
     items: []
   };
 }
@@ -337,40 +352,72 @@ function toast(msg) {
 }
 
 /* ============================================================ REG ======= */
+/* Реєстр рендерерів. Кожен елемент: kind:"dom" (HTML+WAAPI) або "canvas".
+   sections — власні групи параметрів ефекту (не спільний список для всіх). */
 const REG = {};
 const reg = (id, o) => { REG[id] = Object.assign({ id, kind: "dom", group: "Інше" }, o); };
 
+/* ---------- ТЕКСТ ---------- */
 reg("title", {
   name: "Заголовок", group: "Текст",
-  def: { text: "Ти вже у Потоці", size: 92, weight: 300, spacing: 0.01, color: "#ffffff",
-         x: 50, y: 42, w: 84, h: 26, alpha: 1, speed: 1, dur: 4, anim: 4,
-         align: "center", shadow: 40, rot: 0, blur: 0 },
-  fields: ["text", "size", "weight", "spacing", "align", "shadow", "color", "x", "y", "w"],
+  def: { text: "Ти вже у Потоці", size: 92, weight: 300, spacing: 0.01, lineHeight: 1.12, upper: 0,
+         font: "sans", color: "#ffffff", shadow: 40, align: "center", animIn: "rise", animOut: "fade",
+         x: 50, y: 42, w: 84, h: 26, alpha: 1, speed: 1, rot: 0, blur: 0, dur: 4, anim: 4 },
+  sections: [
+    ["Текст", ["text", "font", "size", "weight", "lineHeight", "spacing", "upper", "align"]],
+    ["Вигляд", ["color", "shadow"]],
+    ["Поява", ["animIn", "animOut", "speed"]]
+  ],
   node(it) {
+    const fam = it.font === "serif" ? 'Georgia,"Times New Roman",serif'
+      : it.font === "mono" ? 'ui-monospace,"SF Mono",Menlo,monospace'
+      : '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif';
+    const txt = it.upper ? String(it.text).toUpperCase() : String(it.text);
     return `<div style="font-size:${it.size}px;font-weight:${it.weight};letter-spacing:${it.spacing}em;
-      color:${it.color};text-align:${it.align || "center"};line-height:1.15;
-      text-shadow:0 0 ${it.shadow || 0}px ${hexA(it.color, .45)}">${esc(it.text)}</div>`;
+      font-family:${fam};line-height:${it.lineHeight};text-align:${it.align};
+      color:${it.color};white-space:pre-wrap;word-break:break-word;
+      text-shadow:0 0 ${it.shadow}px ${hexA(it.color, .45)}">${esc(txt)}</div>`;
   },
   anims(it) {
+    const inKf = {
+      rise: [{ opacity: 0, transform: "translateY(46px)", filter: "blur(10px)" },
+             { opacity: 1, transform: "translateY(0)", filter: "blur(0px)" }],
+      fade: [{ opacity: 0 }, { opacity: 1 }],
+      blur: [{ opacity: 0, filter: "blur(22px)" }, { opacity: 1, filter: "blur(0px)" }],
+      scale: [{ opacity: 0, transform: "scale(.86)" }, { opacity: 1, transform: "scale(1)" }]
+    }[it.animIn] || [{ opacity: 0 }, { opacity: 1 }];
+    const outKf = {
+      fade: { opacity: 0 },
+      rise: { opacity: 0, transform: "translateY(-16px)", filter: "blur(8px)" },
+      blur: { opacity: 0, filter: "blur(18px)" },
+      scale: { opacity: 0, transform: "scale(1.08)" }
+    }[it.animOut] || { opacity: 0 };
     return [{ sel: "div", loop: false, kf: [
-      { opacity: 0, transform: "translateY(40px)", filter: "blur(10px)", offset: 0 },
-      { opacity: 1, transform: "translateY(0)", filter: "blur(0px)", offset: .22 },
-      { opacity: 1, transform: "translateY(0)", filter: "blur(0px)", offset: .8 },
-      { opacity: 0, transform: "translateY(-18px)", filter: "blur(8px)", offset: 1 }
+      { ...inKf[0], offset: 0 }, { ...inKf[1], offset: .2 },
+      { ...inKf[1], offset: .82 }, { ...outKf, offset: 1 }
     ], opt: { duration: Math.max(800, (it.anim || it.dur) * 1000), easing: "cubic-bezier(.22,.8,.2,1)" } }];
   }
 });
 
 reg("subtitle", {
   name: "Підзаголовок", group: "Текст",
-  def: { text: "дихай — і все станеться", size: 42, weight: 300, spacing: 0.04, color: "#b9c6ff",
-         x: 50, y: 55, w: 78, h: 12, alpha: .9, speed: 1, dur: 4, anim: 4,
-         align: "center", shadow: 20, rot: 0, blur: 0 },
-  fields: ["text", "size", "weight", "spacing", "align", "shadow", "color", "x", "y", "w", "alpha"],
+  def: { text: "дихай — і все станеться", size: 42, weight: 300, spacing: 0.04, lineHeight: 1.3, upper: 0,
+         font: "sans", color: "#b9c6ff", shadow: 20, align: "center", animIn: "fade", animOut: "fade",
+         x: 50, y: 55, w: 78, h: 12, alpha: .9, speed: 1, rot: 0, blur: 0, dur: 4, anim: 4 },
+  sections: [
+    ["Текст", ["text", "font", "size", "weight", "lineHeight", "spacing", "upper", "align"]],
+    ["Вигляд", ["color", "shadow"]],
+    ["Поява", ["animIn", "animOut", "speed"]]
+  ],
   node(it) {
+    const fam = it.font === "serif" ? 'Georgia,"Times New Roman",serif'
+      : it.font === "mono" ? 'ui-monospace,"SF Mono",Menlo,monospace'
+      : '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif';
+    const txt = it.upper ? String(it.text).toUpperCase() : String(it.text);
     return `<div style="font-size:${it.size}px;font-weight:${it.weight};letter-spacing:${it.spacing}em;
-      color:${it.color};text-align:${it.align || "center"};line-height:1.3;
-      text-shadow:0 0 ${it.shadow || 0}px ${hexA(it.color, .5)}">${esc(it.text)}</div>`;
+      font-family:${fam};line-height:${it.lineHeight};text-align:${it.align};
+      color:${it.color};white-space:pre-wrap;word-break:break-word;
+      text-shadow:0 0 ${it.shadow}px ${hexA(it.color, .5)}">${esc(txt)}</div>`;
   },
   anims(it) {
     return [{ sel: "div", loop: false, kf: [
@@ -382,55 +429,82 @@ reg("subtitle", {
   }
 });
 
+/* ---------- СВІТЛО ---------- */
 reg("glow", {
   name: "Сяйво", group: "Світло",
-  def: { color: "#7fd6ff", color2: "#2a4cff", x: 50, y: 45, w: 70, h: 70, alpha: .7, speed: 1, dur: 6, anim: 6, rot: 0, blur: 0 },
-  fields: ["color", "color2", "x", "y", "w", "h", "alpha", "speed"],
+  def: { color: "#7fd6ff", color2: "#2a4cff", soft: 140, pulse: .22, pulseSpeed: 1,
+         x: 50, y: 45, w: 70, h: 70, alpha: .7, speed: 1, rot: 0, blur: 0, dur: 6, anim: 6 },
+  sections: [
+    ["Світло", ["color", "color2", "soft", "pulse", "pulseSpeed"]],
+    ["Розмір", ["x", "y", "w", "h", "alpha"]]
+  ],
   node(it) {
     return `<div style="width:100%;height:100%;
-      background:radial-gradient(circle at 50% 50%,${hexA(it.color, .6)} 0%,${hexA(it.color2 || it.color, .22)} 42%,transparent 72%);
-      filter:blur(${Math.round(it.w * 2)}px)"></div>`;
+      background:radial-gradient(circle at 50% 50%,${hexA(it.color, .62)} 0%,${hexA(it.color2, .2)} 42%,transparent 72%);
+      filter:blur(${it.soft}px)"></div>`;
   },
-  anims() {
+  anims(it) {
+    const d = Math.max(0, it.pulse) * .45;
     return [{ sel: "div", loop: true, kf: [
-      { transform: "scale(.86)", opacity: .55 },
+      { transform: "scale(1)", opacity: 1 - d },
       { transform: "scale(1.08)", opacity: 1 },
-      { transform: "scale(.86)", opacity: .55 }
-    ], opt: { duration: 5200, easing: "ease-in-out" } }];
+      { transform: "scale(1)", opacity: 1 - d }
+    ], opt: { duration: 5200 / it.pulseSpeed, easing: "ease-in-out" } }];
   }
 });
 
 reg("rays", {
   name: "Промені", group: "Світло",
-  def: { color: "#8fd0ff", color2: "#c9a6ff", x: 50, y: 58, w: 120, h: 120, alpha: .28, speed: 1, dur: 8, anim: 8, rot: 0, blur: 0 },
-  fields: ["color", "color2", "x", "y", "w", "alpha", "speed"],
+  def: { color: "#8fd0ff", color2: "#c9a6ff", beams: 9, inner: 18, soft: 6, spin: 46,
+         x: 50, y: 58, w: 120, h: 120, alpha: .28, speed: 1, rot: 0, blur: 0, dur: 8, anim: 8 },
+  sections: [
+    ["Промені", ["beams", "inner", "soft", "spin"]],
+    ["Колір", ["color", "color2"]],
+    ["Розмір", ["x", "y", "w", "alpha"]]
+  ],
   node(it) {
+    const n = Math.max(2, Math.round(it.beams));
+    const stops = [];
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * 100;
+      stops.push(`transparent ${(a).toFixed(1)}%`);
+      stops.push(`${hexA(i % 2 ? it.color2 : it.color, .55)} ${(a + 100 / n / 3).toFixed(1)}%`);
+      stops.push(`transparent ${(a + 100 / n / 1.7).toFixed(1)}%`);
+    }
     return `<div style="width:100%;height:100%;border-radius:50%;
-      background:conic-gradient(from 0deg,transparent 0 8%,${hexA(it.color, .5)} 10%,transparent 14% 24%,
-        ${hexA(it.color2 || it.color, .35)} 27%,transparent 31% 44%,${hexA(it.color, .45)} 47%,transparent 52% 70%,
-        ${hexA(it.color2 || it.color, .3)} 74%,transparent 78%);
-      -webkit-mask-image:radial-gradient(circle,rgba(0,0,0,.95) 18%,transparent 70%);
-      mask-image:radial-gradient(circle,rgba(0,0,0,.95) 18%,transparent 70%);filter:blur(6px)"></div>`;
+      background:conic-gradient(from 0deg,${stops.join(",")});
+      -webkit-mask-image:radial-gradient(circle,transparent ${Math.round(it.inner * .4)}%,#000 ${it.inner + 12}%,transparent ${Math.min(88, it.inner + 52)}%);
+      mask-image:radial-gradient(circle,transparent ${Math.round(it.inner * .4)}%,#000 ${it.inner + 12}%,transparent ${Math.min(88, it.inner + 52)}%);
+      filter:blur(${it.soft}px)"></div>`;
   },
-  anims() {
+  anims(it) {
     return [{ sel: "div", loop: true, kf: [{ transform: "rotate(0deg)" }, { transform: "rotate(360deg)" }],
-      opt: { duration: 46000, easing: "linear" } }];
+      opt: { duration: Math.max(4000, 360000 / Math.max(4, it.spin * 12)), easing: "linear" } }];
   }
 });
 
 reg("vignette", {
   name: "Віньєтка", group: "Світло",
-  def: { x: 50, y: 50, w: 100, h: 100, alpha: 1, speed: 1, dur: 20 },
-  fields: ["x", "y", "w", "h", "alpha"],
-  node() { return `<div style="width:100%;height:100%;background:radial-gradient(ellipse at 50% 50%,transparent 40%,rgba(0,0,0,.75) 100%)"></div>`; },
+  def: { inner: 42, soft: 58, strength: .78, x: 50, y: 50, w: 100, h: 100, alpha: 1, speed: 1, rot: 0, blur: 0, dur: 20, anim: 20 },
+  sections: [["Форма", ["inner", "soft", "strength"]], ["Розмір", ["x", "y", "w", "h", "alpha"]]],
+  node(it) {
+    return `<div style="width:100%;height:100%;
+      background:radial-gradient(ellipse at 50% 50%,transparent ${it.inner}%,
+        rgba(0,0,0,${Math.round(it.strength * 100) / 100}) ${Math.min(100, it.inner + it.soft)}%)"></div>`;
+  },
   anims() { return []; }
 });
 
+/* ---------- ЧАСТИНКИ ---------- */
 reg("particles", {
   name: "Частинки", group: "Рух",
-  def: { color: "#9fe8ff", x: 50, y: 50, w: 100, h: 100, alpha: .85, speed: 1, count: 46, dur: 10, anim: 10,
-         size: 1, rot: 0, blur: 0 },
-  fields: ["color", "count", "size", "x", "y", "w", "alpha", "speed"],
+  def: { color: "#9fe8ff", count: 46, size: 1, rise: 280, spread: 1, twinkle: 0, speed: 1,
+         x: 50, y: 50, w: 100, h: 100, alpha: .85, rot: 0, blur: 0, dur: 10, anim: 10 },
+  sections: [
+    ["Частинки", ["count", "size", "rise", "spread", "twinkle", "speed"]],
+    ["Колір", ["color"]],
+    ["Розмір", ["x", "y", "w", "alpha"]]
+  ],
   node(it) {
     const R = seeded(it.id + "n"), n = Math.round(it.count), sz = it.size || 1;
     let out = "";
@@ -442,21 +516,28 @@ reg("particles", {
     }
     return `<div style="width:100%;height:100%;position:relative">${out}</div>`;
   },
-  anims() {
-    return [{ sel: "i", each: true, loop: true, kf: [
-      { transform: "translateY(0px)", opacity: .15 },
-      { transform: "translateY(-140px)", opacity: .9, offset: .5 },
-      { transform: "translateY(-280px)", opacity: 0 }
-    ], opt: { duration: 7000, easing: "linear" } }];
+  anims(it) {
+    const tw = it.twinkle ? [{ transform: "translateY(0px) scale(.7)", opacity: .1 },
+                             { transform: "translateY(-40px) scale(1)", opacity: .95, offset: .5 },
+                             { transform: "translateY(-80px) scale(.7)", opacity: .1 }]
+                          : [{ transform: "translateY(0px)", opacity: .15 },
+                             { transform: `translateY(${-it.rise * .5}px)`, opacity: .9, offset: .5 },
+                             { transform: `translateY(${-it.rise}px)`, opacity: 0 }];
+    return [{ sel: "i", each: true, loop: true, kf: tw,
+      opt: { duration: Math.max(2000, 7000 / it.speed), easing: "linear" } }];
   },
   eachDelay: (it, i) => seeded(it.id + "d" + i)() * 5000
 });
 
 reg("embers", {
   name: "Іскри", group: "Рух",
-  def: { color: "#ffb46a", x: 50, y: 72, w: 100, h: 60, alpha: .9, speed: 1, count: 26, dur: 12, anim: 12,
-         size: 1, rot: 0, blur: 0 },
-  fields: ["color", "count", "size", "x", "y", "w", "h", "alpha", "speed"],
+  def: { color: "#ffb46a", count: 26, size: 1, rise: 260, drift: 14, speed: 1,
+         x: 50, y: 72, w: 100, h: 60, alpha: .9, rot: 0, blur: 0, dur: 12, anim: 12 },
+  sections: [
+    ["Іскри", ["count", "size", "rise", "drift", "speed"]],
+    ["Колір", ["color"]],
+    ["Розмір", ["x", "y", "w", "h", "alpha"]]
+  ],
   node(it) {
     const R = seeded(it.id + "n"), n = Math.round(it.count), sz = it.size || 1;
     let out = "";
@@ -468,40 +549,41 @@ reg("embers", {
     }
     return `<div style="width:100%;height:100%;position:relative">${out}</div>`;
   },
-  anims() {
+  anims(it) {
     return [{ sel: "i", each: true, loop: true, kf: [
       { transform: "translate(0,0) scale(1)", opacity: .2 },
-      { transform: "translate(14px,-120px) scale(1.15)", opacity: 1, offset: .45 },
-      { transform: "translate(-10px,-260px) scale(.7)", opacity: 0 }
-    ], opt: { duration: 5200, easing: "ease-out" } }];
+      { transform: `translate(${it.drift}px,${-it.rise * .46}px) scale(1.15)`, opacity: 1, offset: .45 },
+      { transform: `translate(${-it.drift * .7}px,${-it.rise}px) scale(.7)`, opacity: 0 }
+    ], opt: { duration: Math.max(2000, 5200 / it.speed), easing: "ease-out" } }];
   },
   eachDelay: (it, i) => seeded(it.id + "e" + i)() * 4000
 });
 
+/* ---------- ГЕОМЕТРІЯ ---------- */
 reg("cross", {
   name: "Хрест", group: "Символи",
-  def: { x: 50, y: 58, w: 34, h: 46, color: "#000000", alpha: 1, speed: 1, dur: 20, anim: 20,
-         shape: "latin", bar: 9, rot: 0, blur: 0 },
-  fields: ["shape", "bar", "x", "y", "w", "h", "color", "alpha"],
+  def: { shape: "latin", bar: 9, arm: 100, armPos: 24, soft: 0, color: "#000000",
+         x: 50, y: 58, w: 34, h: 46, alpha: 1, speed: 1, rot: 0, blur: 0, dur: 20, anim: 20 },
+  sections: [
+    ["Форма", ["shape", "bar", "arm", "armPos", "soft"]],
+    ["Вигляд", ["color", "alpha"]],
+    ["Розмір", ["x", "y", "w", "h"]]
+  ],
   node(it) {
-    const bar = Math.max(4, Math.round(it.h * (it.bar || 9)));
+    const bar = Math.max(4, Math.round(it.h * it.bar));
+    const g = Math.round(bar * .16);
     if (it.shape === "orthodox") {
-      return `<div style="position:relative;width:100%;height:100%">
-        <b style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${bar}px;height:100%;
-          background:${it.color};border-radius:${Math.round(bar * .16)}px"></b>
-        <b style="position:absolute;left:12%;top:16%;width:76%;height:${Math.round(bar * .85)}px;
-          background:${it.color};border-radius:${Math.round(bar * .16)}px"></b>
-        <b style="position:absolute;left:6%;top:34%;width:88%;height:${Math.round(bar * .85)}px;
-          background:${it.color};transform:rotate(-12deg);border-radius:${Math.round(bar * .16)}px"></b>
-        <b style="position:absolute;left:26%;top:78%;width:48%;height:${Math.round(bar * .8)}px;
-          background:${it.color};transform:rotate(-16deg);border-radius:${Math.round(bar * .16)}px"></b>
+      return `<div style="position:relative;width:100%;height:100%;filter:blur(${it.soft}px)">
+        <b style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${bar}px;height:100%;background:${it.color};border-radius:${g}px"></b>
+        <b style="position:absolute;left:${(100 - it.arm) / 2}%;top:${it.armPos - 8}%;width:${it.arm}%;height:${Math.round(bar * .85)}px;background:${it.color};border-radius:${g}px"></b>
+        <b style="position:absolute;left:${(100 - it.arm * .9) / 2}%;top:${it.armPos + 12}%;width:${it.arm * .9}%;height:${Math.round(bar * .85)}px;background:${it.color};transform:rotate(-12deg);border-radius:${g}px"></b>
+        <b style="position:absolute;left:28%;top:78%;width:44%;height:${Math.round(bar * .8)}px;background:${it.color};transform:rotate(-16deg);border-radius:${g}px"></b>
       </div>`;
     }
-    return `<div style="position:relative;width:100%;height:100%">
-      <b style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${bar}px;height:100%;
-        background:${it.color};border-radius:${Math.round(bar * .18)}px"></b>
-      <b style="position:absolute;left:0;top:24%;width:100%;height:${Math.round(bar * .92)}px;
-        background:${it.color};border-radius:${Math.round(bar * .18)}px"></b></div>`;
+    return `<div style="position:relative;width:100%;height:100%;filter:blur(${it.soft}px)">
+      <b style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${bar}px;height:100%;background:${it.color};border-radius:${Math.round(bar * .18)}px"></b>
+      <b style="position:absolute;left:${(100 - it.arm) / 2}%;top:${it.armPos}%;width:${it.arm}%;height:${Math.round(bar * .92)}px;background:${it.color};border-radius:${Math.round(bar * .18)}px"></b>
+    </div>`;
   },
   anims(it) {
     return [{ sel: "div", loop: false, kf: [
@@ -515,11 +597,13 @@ reg("cross", {
 
 reg("line", {
   name: "Лінія", group: "Символи",
-  def: { color: "#5ee0c8", x: 50, y: 50, w: 40, h: 1, alpha: .9, speed: 1, dur: 4 },
-  fields: ["color", "x", "y", "w", "alpha", "speed"],
+  def: { color: "#5ee0c8", thick: 2, glow: 14, x: 50, y: 50, w: 40, h: 1, alpha: .9,
+         speed: 1, rot: 0, blur: 0, dur: 4, anim: 4 },
+  sections: [["Лінія", ["thick", "glow"]], ["Колір", ["color"]], ["Розмір", ["x", "y", "w", "alpha"]]],
   node(it) {
-    return `<div style="width:100%;height:2px;background:linear-gradient(90deg,transparent,${it.color},transparent);
-      box-shadow:0 0 14px ${hexA(it.color, .8)}"></div>`;
+    return `<div style="width:100%;height:${it.thick}px;border-radius:${it.thick}px;
+      background:linear-gradient(90deg,transparent,${it.color},transparent);
+      box-shadow:0 0 ${it.glow}px ${hexA(it.color, .8)}"></div>`;
   },
   anims(it) {
     return [{ sel: "div", loop: false, kf: [
@@ -531,78 +615,91 @@ reg("line", {
   }
 });
 
-/* ---------- ОБРАЗИ ШЛЯХУ (з каталогу візуалів) ---------- */
+/* ---------- ОБРАЗИ ШЛЯХУ ---------- */
 reg("vortex", {
   name: "Вихор", group: "Образи",
-  def: { color: "#56c8c4", color2: "#7fd6ff", x: 50, y: 45, w: 62, h: 62, alpha: .9, speed: 1, dur: 8, anim: 8,
-         dir: 1, rot: 0, blur: 0 },
-  fields: ["color", "color2", "dir", "x", "y", "w", "alpha", "speed"],
+  def: { color: "#56c8c4", color2: "#7fd6ff", arms: 3, sharp: 34, soft: 4, spin: 9, dir: 1,
+         x: 50, y: 45, w: 62, h: 62, alpha: .9, speed: 1, rot: 0, blur: 0, dur: 8, anim: 8 },
+  sections: [
+    ["Вихор", ["arms", "sharp", "soft", "spin", "dir"]],
+    ["Колір", ["color", "color2"]],
+    ["Розмір", ["x", "y", "w", "alpha"]]
+  ],
   node(it) {
+    const a = Math.round(it.arms), stops = [];
+    for (let i = 0; i < a; i++) {
+      const s = (i / a) * 100, w = 100 / a;
+      stops.push(`transparent ${s.toFixed(1)}%`);
+      stops.push(`${hexA(it.color, .8)} ${(s + w * it.sharp / 100).toFixed(1)}%`);
+      stops.push(`transparent ${(s + w * .8).toFixed(1)}%`);
+    }
     return `<div style="width:100%;height:100%;border-radius:50%;
-      background:conic-gradient(from 0deg,transparent 0%,${hexA(it.color, .75)} 18%,transparent 34%,
-        ${hexA(it.color2 || it.color, .5)} 52%,transparent 66%,${hexA(it.color, .85)} 84%,transparent 100%);
+      background:conic-gradient(from 0deg,${stops.join(",")});
       -webkit-mask-image:radial-gradient(circle,transparent 10%,#000 42%,transparent 74%);
       mask-image:radial-gradient(circle,transparent 10%,#000 42%,transparent 74%);
-      filter:blur(${Math.round(it.w * .06)}px)"></div>`;
+      filter:blur(${it.soft}px)"></div>`;
   },
   anims(it) {
-    return [{ sel: "div", loop: true, kf: [{ transform: "rotate(0deg) scale(1)" },
-      { transform: `rotate(${it && it.dir < 0 ? -360 : 360}deg) scale(1.06)` }], opt: { duration: 9000, easing: "linear" } }];
+    const dur = Math.max(1200, 9000 / Math.max(.5, it.spin));
+    return [{ sel: "div", loop: true, kf: [{ transform: "rotate(0deg)" },
+      { transform: `rotate(${it.dir < 0 ? -360 : 360}deg)` }], opt: { duration: dur, easing: "linear" } }];
   }
 });
 
 reg("rings", {
   name: "Кола", group: "Образи",
-  def: { color: "#5ee0c8", x: 50, y: 50, w: 60, h: 60, alpha: .8, speed: 1, count: 4, dur: 8, anim: 8,
-         bar: 35, rot: 0, blur: 0 },
-  fields: ["color", "count", "bar", "x", "y", "w", "alpha", "speed"],
+  def: { color: "#5ee0c8", count: 4, bar: 35, expand: 1.6, x: 50, y: 50, w: 60, h: 60,
+         alpha: .8, speed: 1, rot: 0, blur: 0, dur: 8, anim: 8 },
+  sections: [["Кола", ["count", "bar", "expand", "speed"]], ["Колір", ["color"]], ["Розмір", ["x", "y", "w", "alpha"]]],
   node(it) {
     const n = Math.max(2, Math.round(it.count));
     let out = "";
     for (let i = 0; i < n; i++) out += `<b style="position:absolute;left:0;top:0;width:100%;height:100%;
-      border-radius:50%;border:${Math.max(1, Math.round(it.w * ((it.bar || 35) / 100)))}px solid ${it.color};opacity:.8"></b>`;
+      border-radius:50%;border:${Math.max(1, Math.round(it.w * (it.bar / 100)))}px solid ${it.color};opacity:.8"></b>`;
     return out;
   },
-  anims() {
+  anims(it) {
+    const n = Math.max(2, Math.round(it.count));
     return [{ sel: "b", each: true, loop: true, kf: [
       { transform: "scale(.15)", opacity: .85 },
-      { transform: "scale(1)", opacity: 0 }
-    ], opt: { duration: 4800, easing: "ease-out" } }];
+      { transform: `scale(${it.expand})`, opacity: 0 }
+    ], opt: { duration: Math.max(1200, 4800 / it.speed), easing: "ease-out" } }];
   },
-  eachDelay: (it, i) => i * (4800 / Math.max(2, Math.round(it.count)))
+  eachDelay: (it, i) => i * (4800 / it.speed / Math.max(2, Math.round(it.count)))
 });
 
 reg("nebula", {
   name: "Туманність", group: "Образи",
-  def: { color: "#8a5cff", color2: "#2f7dff", x: 50, y: 40, w: 90, h: 70, alpha: .55, speed: 1, dur: 12, anim: 12, rot: 0, blur: 0 },
-  fields: ["color", "color2", "x", "y", "w", "h", "alpha", "speed"],
+  def: { color: "#8a5cff", color2: "#2f7dff", blobs: 4, soft: 38, drift: 12, speed: 1,
+         x: 50, y: 40, w: 90, h: 70, alpha: .55, rot: 0, blur: 0, dur: 12, anim: 12 },
+  sections: [["Туманність", ["blobs", "soft", "drift", "speed"]], ["Колір", ["color", "color2"]], ["Розмір", ["x", "y", "w", "h", "alpha"]]],
   node(it) {
-    const R = seeded(it.id + "nb");
+    const R = seeded(it.id + "nb"), n = Math.max(1, Math.round(it.blobs));
     let out = "";
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < n; i++) {
       const cx = 20 + R() * 60, cy = 20 + R() * 60, s = 30 + R() * 34;
-      const col = i % 2 ? (it.color2 || it.color) : it.color;
+      const col = i % 2 ? it.color2 : it.color;
       out += `<b style="position:absolute;left:${cx - s / 2}%;top:${cy - s / 2}%;width:${s}%;height:${s * 1.2}%;
-        border-radius:50%;filter:blur(38px);
+        border-radius:50%;filter:blur(${it.soft}px);
         background:radial-gradient(circle,${hexA(col, .55)} 0%,${hexA(col, .12)} 55%,transparent 72%)"></b>`;
     }
     return out;
   },
-  anims() {
+  anims(it) {
     return [{ sel: "b", each: true, loop: true, kf: [
       { transform: "translate(0,0) scale(1)", opacity: .7 },
-      { transform: "translate(10px,-14px) scale(1.12)", opacity: 1 },
+      { transform: `translate(${it.drift}px,${-it.drift}px) scale(1.12)`, opacity: 1 },
       { transform: "translate(0,0) scale(1)", opacity: .7 }
-    ], opt: { duration: 11000, easing: "ease-in-out" } }];
+    ], opt: { duration: Math.max(3000, 11000 / it.speed), easing: "ease-in-out" } }];
   },
   eachDelay: (it, i) => i * 1400
 });
 
 reg("constellation", {
   name: "Сузір'я", group: "Образи",
-  def: { color: "#cfe4ff", x: 50, y: 45, w: 90, h: 60, alpha: .9, speed: 1, count: 54, dur: 12, anim: 12,
-         size: 1, rot: 0, blur: 0 },
-  fields: ["color", "count", "size", "x", "y", "w", "h", "alpha", "speed"],
+  def: { color: "#cfe4ff", count: 54, size: 1, twinkle: 1, speed: 1,
+         x: 50, y: 45, w: 90, h: 60, alpha: .9, rot: 0, blur: 0, dur: 12, anim: 12 },
+  sections: [["Зорі", ["count", "size", "twinkle", "speed"]], ["Колір", ["color"]], ["Розмір", ["x", "y", "w", "h", "alpha"]]],
   node(it) {
     const R = seeded(it.id + "cs"), n = Math.round(it.count), sz = it.size || 1;
     let out = "";
@@ -614,28 +711,31 @@ reg("constellation", {
     }
     return out;
   },
-  anims() {
+  anims(it) {
+    if (!it.twinkle) return [];
     return [{ sel: "i", each: true, loop: true, kf: [
       { opacity: .18, transform: "scale(.85)" },
       { opacity: 1, transform: "scale(1)" },
       { opacity: .18, transform: "scale(.85)" }
-    ], opt: { duration: 3600, easing: "ease-in-out" } }];
+    ], opt: { duration: Math.max(1200, 3600 / it.speed), easing: "ease-in-out" } }];
   },
   eachDelay: (it, i) => seeded(it.id + "cd" + i)() * 3600
 });
 
 reg("grain", {
   kind: "canvas", name: "Зерно", group: "Шум",
-  def: { x: 50, y: 50, w: 100, h: 100, alpha: .12, speed: 1, dur: 20 },
-  fields: ["x", "y", "w", "h", "alpha", "speed"],
-  node() { return `<canvas width="270" height="480" style="width:100%;height:100%;image-rendering:pixelated"></canvas>`; },
-  paint(ctx, local) {
+  def: { intensity: .35, px: 2, speed: 1, x: 50, y: 50, w: 100, h: 100, alpha: .12, rot: 0, blur: 0, dur: 20, anim: 20 },
+  sections: [["Зерно", ["intensity", "px", "speed"]], ["Розмір", ["x", "y", "w", "h", "alpha"]]],
+  node(it) { return `<canvas width="270" height="480" style="width:100%;height:100%;image-rendering:pixelated"></canvas>`; },
+  paint(ctx, local, w, h, it) {
+    const cw = Math.max(80, Math.round(270 / Math.max(1, it.px)));
+    if (ctx.canvas.width !== cw) { ctx.canvas.width = cw; ctx.canvas.height = Math.round(cw * 16 / 9); }
     const img = ctx.createImageData(ctx.canvas.width, ctx.canvas.height);
-    const d = img.data;
-    let s = (Math.floor(local * 18) + 1) * 7919;
+    const d = img.data, k = it.intensity;
+    let s = (Math.floor(local * 18 * it.speed) + 1) * 7919;
     for (let i = 0; i < d.length; i += 4) {
       s = (s * 1103515245 + 12345) & 0x7fffffff;
-      const v = 128 + ((s % 1000) / 1000 - .5) * 255;
+      const v = 128 + ((s % 1000) / 1000 - .5) * 255 * k * 2;
       d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
     }
     ctx.putImageData(img, 0, 0);
@@ -657,6 +757,8 @@ function buildItem(it) {
   el.style.transform = `translate(-50%,-50%) rotate(${it.rot || 0}deg)`;
   if (it.blur) el.style.filter = `blur(${it.blur}px)`;
   el.style.opacity = it.alpha;
+  const zi = doc.tracks.findIndex(t => t.id === it.track);
+  el.style.zIndex = String((zi < 0 ? 0 : zi) + 1);
   el.innerHTML = `<div class="el">${p.node(it)}</div>`;
   return el;
 }
@@ -783,63 +885,102 @@ function syncStage() {
 }
 
 /* ============================================================ TIMELINE == */
+const TL_X0 = 56;          // ширина колонки з назвами доріжок
+const ROW_H = 32;
+
+const trackIndex = id => Math.max(0, doc.tracks.findIndex(t => t.id === id));
+const trackById = id => doc.tracks[trackIndex(id)] || doc.tracks[0];
+let activeTrack = (doc.tracks[doc.tracks.length - 1] || {}).id;
+
 function timelineEnd() {
   return Math.max(5, ...doc.items.map(i => i.start + i.dur), playhead + 2);
 }
+
 function renderTimeline() {
   const total = Math.max(doc.meta.duration, timelineEnd());
-  $("#tlInner").style.width = (total * dpps + 60) + "px";
+  $("#tlInner").style.width = (TL_X0 + total * dpps + 60) + "px";
+
+  // лінійка
   let rh = "";
   const step = dpps >= 90 ? .5 : 1;
   for (let s = 0; s <= total + .01; s += step) {
     const major = Math.abs(s % 5) < .001;
-    rh += `<i class="${major ? "maj" : ""}" style="left:${s * dpps}px"></i>`;
-    if (major && s > 0) rh += `<span style="left:${s * dpps}px">${s}с</span>`;
+    rh += `<i class="${major ? "maj" : ""}" style="left:${TL_X0 + s * dpps}px"></i>`;
+    if (major && s > 0) rh += `<span style="left:${TL_X0 + s * dpps}px">${s}с</span>`;
   }
   $("#ruler").innerHTML = rh;
-  $("#track").innerHTML = doc.items.map(it => {
-    const p = REG[it.type];
-    return `<div class="clip ${it.id === sel ? "sel" : ""}" data-id="${esc(it.id)}"
-      style="left:${it.start * dpps}px;width:${Math.max(18, it.dur * dpps)}px">
-      <div class="nm">${esc(p ? p.name : it.type)}</div>
-      <div class="du">${it.dur.toFixed(1)}с</div>
-      <div class="grip"></div></div>`;
+
+  // доріжки: згори — верхній шар
+  const rows = [...doc.tracks].reverse();
+  $("#track").innerHTML = rows.map(t => {
+    const clips = doc.items.filter(i => (i.track || doc.tracks[0].id) === t.id);
+    return `<div class="trow" data-track="${esc(t.id)}" style="height:${ROW_H}px">
+      <div class="tname ${t.id === activeTrack ? "on" : ""}" data-act="${esc(t.id)}">${esc(t.name)}</div>
+      ${clips.map(it => {
+        const p = REG[it.type];
+        return `<div class="clip ${it.id === sel ? "sel" : ""}" data-id="${esc(it.id)}"
+          style="left:${TL_X0 + it.start * dpps}px;width:${Math.max(16, it.dur * dpps)}px">
+          <div class="nm">${esc(p ? p.name : it.type)}</div>
+          <div class="du">${it.dur.toFixed(1)}с</div>
+          <div class="grip"></div></div>`;
+      }).join("")}
+    </div>`;
   }).join("");
-  $("#tlInfo").textContent = doc.items.length + " ел. · " + total.toFixed(1) + "с";
+
+  $("#tlInfo").textContent = doc.items.length + " ел. · " + doc.tracks.length + " дор. · " + total.toFixed(1) + "с";
   $("#hdur").textContent = doc.meta.duration.toFixed(1) + " с";
-  $("#playhead").style.left = (playhead * dpps) + "px";
+  $("#playhead").style.left = (TL_X0 + playhead * dpps) + "px";
 }
+
 function seek(t) {
   playhead = clamp(t, 0, Math.max(doc.meta.duration, timelineEnd()));
   applyTime(playhead);
-  const sc = $("#tlScroll"), x = playhead * dpps;
+  const sc = $("#tlScroll"), x = TL_X0 + playhead * dpps;
   if (x < sc.scrollLeft + 20 || x > sc.scrollLeft + sc.clientWidth - 40) sc.scrollLeft = Math.max(0, x - sc.clientWidth * .4);
 }
 
-/* drag кліпів */
+/* ---- drag: час по горизонталі, доріжка по вертикалі; правий край — тривалість ---- */
 let drag = null;
 $("#track").addEventListener("pointerdown", e => {
+  const name = e.target.closest("[data-act]");
+  if (name) { activeTrack = name.dataset.act; renderTimeline(); e.preventDefault(); return; }
   const clip = e.target.closest(".clip");
   if (!clip) {
     const rect = $("#tlInner").getBoundingClientRect();
-    return seek((e.clientX - rect.left) / dpps);
+    return seek((e.clientX - rect.left - TL_X0) / dpps);
   }
   const it = doc.items.find(i => i.id === clip.dataset.id);
   if (!it) return;
-  sel = it.id; paintInspector(); renderTimeline();
+  sel = it.id; activeTrack = it.track; paintInspector(); renderTimeline();
+  const row = clip.closest(".trow").getBoundingClientRect();
   drag = { id: it.id, mode: e.target.classList.contains("grip") ? "resize" : "move",
-           x0: e.clientX, s0: it.start, d0: it.dur, snap: snapshot(), moved: false };
+           x0: e.clientX, y0: e.clientY, rowTop: row.top, s0: it.start, d0: it.dur,
+           t0: it.track, snap: snapshot(), moved: false };
   try { clip.setPointerCapture(e.pointerId); } catch (err) {}
   e.preventDefault();
 });
 window.addEventListener("pointermove", e => {
   if (!drag) return;
-  const dx = (e.clientX - drag.x0) / dpps;
-  if (Math.abs(dx) > .02) drag.moved = true;
+  const dx = (e.clientX - drag.x0) / dpps, dy = e.clientY - drag.y0;
+  if (Math.abs(dx) > .02 || Math.abs(dy) > 4) drag.moved = true;
   const it = doc.items.find(i => i.id === drag.id);
   if (!it) return;
-  if (drag.mode === "move") it.start = Math.max(0, Math.round((drag.s0 + dx) * 10) / 10);
-  else it.dur = Math.max(.3, Math.round((drag.d0 + dx) * 10) / 10);
+  if (drag.mode === "move") {
+    it.start = Math.max(0, Math.round((drag.s0 + dx) * 10) / 10);
+    if (Math.abs(dy) > ROW_H / 2) {
+      const rows = [...doc.tracks].reverse();
+      const cur = rows.findIndex(t => t.id === drag.t0);
+      const shift = Math.round(dy / ROW_H);
+      const next = rows[clamp(cur + shift, 0, rows.length - 1)];
+      if (next && next.id !== it.track) {
+        it.track = next.id;
+        drag.t0 = next.id; drag.rowTop += shift * ROW_H; drag.y0 = e.clientY;
+        activeTrack = next.id;
+      }
+    }
+  } else {
+    it.dur = Math.max(.3, Math.round((drag.d0 + dx) * 10) / 10);
+  }
   renderTimeline(); applyTime(playhead);
 });
 window.addEventListener("pointerup", () => {
@@ -852,26 +993,47 @@ window.addEventListener("pointerup", () => {
 });
 $("#ruler").addEventListener("pointerdown", e => {
   const rect = $("#tlInner").getBoundingClientRect();
-  seek((e.clientX - rect.left) / dpps);
-  const move = ev => seek((ev.clientX - rect.left) / dpps);
+  seek((e.clientX - rect.left - TL_X0) / dpps);
+  const move = ev => seek((ev.clientX - rect.left - TL_X0) / dpps);
   const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
   window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
 });
 
 /* ============================================================ INSPECTOR = */
-const LABEL = { x:"X, %", y:"Y, %", w:"Ширина, %", h:"Висота, %", alpha:"Прозорість", speed:"Швидкість",
-  color:"Колір", color2:"Другий колір", text:"Текст", size:"Розмір", weight:"Товщина", spacing:"Трекінг",
-  count:"Кількість", start:"Початок, с", dur:"Тривалість, с", rot:"Поворот, °", blur:"Розмиття",
-  align:"Вирівнювання", shadow:"Світіння тексту", shape:"Форма", bar:"Товщина", dir:"Напрямок" };
-const RANGE = { x:[0,100,.5], y:[0,100,.5], w:[2,140,.5], h:[1,140,.5], alpha:[0,1,.02], speed:[.2,4,.05],
-  size:[12,220,1], spacing:[-.02,.3,.005], count:[4,140,1], start:[0,600,.1], dur:[.3,120,.1],
-  rot:[-180,180,1], blur:[0,30,.5], shadow:[0,90,1], bar:[3,45,1], "size#dot":[.3,4,.05] };
-const SEL = {
-  align: [["center","по центру"],["left","ліво"],["right","право"]],
-  shape: [["latin","простий"],["orthodox","православний"]],
-  dir:   [["1","за годинниковою"],["-1","проти годинникової"]]
+const LABEL = {
+  x: "X, %", y: "Y, %", w: "Ширина, %", h: "Висота, %", alpha: "Прозорість", speed: "Швидкість",
+  color: "Колір", color2: "Другий колір", text: "Текст", size: "Розмір", weight: "Товщина",
+  spacing: "Трекінг", lineHeight: "Міжрядковий", font: "Шрифт", upper: "Великі літери",
+  align: "Вирівнювання", shadow: "Світіння тексту", animIn: "Поява", animOut: "Зникнення",
+  count: "Кількість", start: "Початок, с", dur: "Тривалість, с", rot: "Поворот, °",
+  blur: "Розмиття", shape: "Форма", bar: "Товщина", dir: "Напрямок", soft: "Мʼякість",
+  pulse: "Пульсація", pulseSpeed: "Швидкість пульсу", beams: "Кількість променів", inner: "Внутрішній радіус",
+  spin: "Обертів/с", strength: "Сила", rise: "Підйом, px", spread: "Розкид", twinkle: "Мерехтіння",
+  drift: "Дрейф, px", arms: "Рукавів", sharp: "Різкість", expand: "Розширення", blobs: "Плям",
+  thick: "Товщина, px", glow: "Світіння, px", intensity: "Інтенсивність", px: "Зерно, px",
+  arm: "Довжина перекладини", armPos: "Позиція перекладини"
 };
-const REMOUNT = ["text","size","weight","spacing","color","x","y","w","h","alpha","count","dur","speed"];
+const RANGE = {
+  x: [0, 100, .5], y: [0, 100, .5], w: [1, 300, .5], h: [1, 300, .5], alpha: [0, 1, .02],
+  speed: [.2, 4, .05], size: [8, 220, 1], weight: [100, 900, 100], spacing: [-.06, .4, .005],
+  lineHeight: [.8, 2.4, .02], count: [0, 300, 1], start: [0, 3600, .1], dur: [.1, 3600, .1],
+  rot: [-180, 180, 1], blur: [0, 40, .5], shadow: [0, 120, 1], bar: [1, 40, 1],
+  soft: [0, 300, 1], pulse: [0, 1, .02], pulseSpeed: [.2, 4, .05], beams: [2, 24, 1],
+  inner: [0, 80, 1], spin: [.5, 60, .5], strength: [0, 1, .02], rise: [20, 800, 10],
+  spread: [0, 3, .05], drift: [0, 90, 1], arms: [2, 8, 1], sharp: [5, 95, 1],
+  expand: [1, 4, .05], blobs: [1, 8, 1], thick: [1, 20, .5], glow: [0, 60, 1],
+  intensity: [0, 1, .02], px: [1, 8, .5], arm: [20, 100, 1], armPos: [5, 60, 1]
+};
+const SEL = {
+  align: [["center", "по центру"], ["left", "ліво"], ["right", "право"]],
+  shape: [["latin", "простий"], ["orthodox", "православний"]],
+  dir: [["1", "за годинниковою"], ["-1", "проти годинникової"]],
+  font: [["sans", "без засічок"], ["serif", "із засічками"], ["mono", "моно"]],
+  animIn: [["rise", "підйом"], ["fade", "прояв"], ["blur", "з розмиття"], ["scale", "збільшення"]],
+  animOut: [["fade", "зникнення"], ["rise", "вгору"], ["blur", "розмиття"], ["scale", "збільшення"]],
+  upper: [["0", "як є"], ["1", "ВЕЛИКИМИ"]],
+  twinkle: [["0", "ні"], ["1", "так"]]
+};
 let insOpen = false;
 
 function paintInspector() {
@@ -882,48 +1044,61 @@ function paintInspector() {
     return;
   }
   const p = REG[it.type];
-  const fields = ["start", "dur", ...(p.fields || Object.keys(p.def)), "rot", "blur"];
+  const used = new Set();
+  const secs = [["Час", ["start", "dur", "speed"]],
+                ...(p.sections || [["Параметри", p.fields || Object.keys(p.def)]]),
+                ["Положення", ["x", "y", "w", "h", "rot", "blur", "alpha"]]];
+  const body = secs.map(([title, keys]) => {
+    const ks = keys.filter(k => { if (used.has(k)) return false; used.add(k); return true; });
+    if (!ks.length) return "";
+    return `<div class="sec"><div class="secT">${esc(title)}</div>
+      <div class="insGrid">${ks.map(k => field(it, k)).join("")}</div></div>`;
+  }).join("");
+
   box.classList.add("on");
-  box.innerHTML = `
-    <div class="insHead">
+  box.innerHTML = `<div class="insHead">
       <span class="nm">${esc(p.name)}</span>
-      <span class="tag">${esc(p.group)} · ${it.start.toFixed(1)}–${(it.start + it.dur).toFixed(1)} с</span>
+      <span class="tag">${esc(trackById(it.track).name)} · ${it.start.toFixed(1)}–${(it.start + it.dur).toFixed(1)} с</span>
       <span style="flex:1"></span><button class="ibtn" id="insClose">✕</button>
-    </div>
-    <div class="insGrid">${fields.map(k => field(it, k)).join("")}</div>`;
+    </div>${body}`;
   if (!insOpen) { insOpen = true; fit(); }
+
   box.querySelectorAll("[data-k]").forEach(inp => {
     inp.addEventListener("input", () => {
       const k = inp.dataset.k;
-      let v = (inp.type === "range" || inp.type === "number") ? parseFloat(inp.value) : inp.value;
+      let v = inp.value;
+      if (inp.type === "range" || inp.type === "number") v = parseFloat(v);
+      else if (SEL[k] && !isNaN(+v)) v = +v;
       if (k === "dur") v = Math.max(.3, v);
       if (k === "start") v = Math.max(0, v);
       it[k] = v;
       if (k === "dur" && !it.anchor) it.anim = v;
       const b = inp.parentElement.querySelector("label b");
       if (b && inp.type === "range") b.textContent = fmtVal(k, v);
-      if (k !== "start") { mount(it); applyTime(playhead); }   // усе, крім часу, міняє вигляд
+      if (k !== "start") { mount(it); applyTime(playhead); }
       renderTimeline(); save();
     });
   });
   $("#insClose").onclick = () => { sel = null; paintInspector(); renderTimeline(); };
 }
+
 function fmtVal(k, v) {
-  if (k === "alpha" || k === "spacing") return Number(v).toFixed(2);
+  if (k === "alpha" || k === "spacing" || k === "pulse" || k === "intensity") return Number(v).toFixed(2);
+  if (k === "lineHeight") return Number(v).toFixed(2);
   if (k === "start" || k === "dur") return Number(v).toFixed(1) + "с";
   return String(Math.round(v * 10) / 10);
 }
+
 function field(it, k) {
   const bad = it[k] === undefined || it[k] === null || (typeof it[k] === "number" && !Number.isFinite(it[k]));
   const v = bad ? 0 : it[k];
-  if (k === "text") return `<div class="fld"><label>${LABEL[k]}</label><input type="text" data-k="text" value="${esc(v)}"></div>`;
-  if (k === "color" || k === "color2") return `<div class="fld"><label>${LABEL[k]}</label><input type="color" data-k="${k}" value="${esc(v)}"></div>`;
-  if (k === "weight") return `<div class="fld"><label>${LABEL[k]}</label><select data-k="weight">${
-    [200,300,400,600,800].map(w => `<option value="${w}" ${+v === w ? "selected" : ""}>${w}</option>`).join("")}</select></div>`;
+  if (k === "text") return `<div class="fld wide"><label>${LABEL[k]}</label>
+    <textarea data-k="text" rows="3" spellcheck="false">${esc(v)}</textarea></div>`;
+  if (k === "color" || k === "color2") return `<div class="fld"><label>${LABEL[k]}</label>
+    <input type="color" data-k="${k}" value="${esc(v)}"></div>`;
   if (SEL[k]) return `<div class="fld"><label>${LABEL[k]}</label><select data-k="${k}">${
-    SEL[k].map(([val,lab]) => `<option value="${val}" ${String(v) === val ? "selected" : ""}>${lab}</option>`).join("")}</select></div>`;
-  const rng = (k === "size" && it.count !== undefined) ? RANGE["size#dot"] : (RANGE[k] || [0,100,1]);
-  const [mn, mx, st] = rng;
+    SEL[k].map(([val, lab]) => `<option value="${val}" ${String(v) === val ? "selected" : ""}>${lab}</option>`).join("")}</select></div>`;
+  const [mn, mx, st] = RANGE[k] || [0, 100, 1];
   return `<div class="fld"><label>${LABEL[k] || k}<b>${fmtVal(k, v)}</b></label>
     <input type="range" data-k="${k}" min="${mn}" max="${mx}" step="${st}" value="${v}"></div>`;
 }
@@ -1009,10 +1184,13 @@ $("#libGrid").addEventListener("click", e => {
 });
 function addItem(type) {
   const p = REG[type];
+  const isText = type === "title" || type === "subtitle";
+  const tr = doc.tracks.find(t => t.name === (isText ? "Текст" : "Ефекти")) || trackById(activeTrack) || doc.tracks[0];
   const it = normItem(Object.assign({}, p.def, {
-    id: uid(), type, track: doc.tracks[0].id, start: Math.round(playhead * 10) / 10,
+    id: uid(), type, track: tr.id, start: Math.round(playhead * 10) / 10,
     dur: p.def.dur || 4, anim: p.def.dur || 4, anchor: 0
   }));
+  activeTrack = tr.id;
   mut(() => { doc.items.push(it); extend(it.start + it.dur); });
   sel = it.id; paintInspector(); renderTimeline(); applyTime(playhead);
   toast("додано: " + p.name);
@@ -1177,6 +1355,14 @@ window.addEventListener("resize", () => { if (!EXP) fit(); });
 /* ============================================================ INIT ====== */
 function boot() {
   sanitizeDoc(doc);                         // тут REG уже визначений
+  // доріжки: міграція старих проєктів з однією доріжкою
+  if (!Array.isArray(doc.tracks) || !doc.tracks.length) doc.tracks = newDoc().tracks;
+  if (doc.tracks.length === 1) {
+    const old = doc.tracks[0];
+    doc.tracks = [{ id: old.id, name: "Фон" }, { id: "v2", name: "Ефекти" }, { id: "v3", name: "Текст" }];
+  }
+  const ids = new Set(doc.tracks.map(t => t.id));
+  for (const it of doc.items) if (!ids.has(it.track)) it.track = doc.tracks[0].id;
   $("#title").value = doc.meta.title;
   fit(); syncStage(); renderTimeline(); applyTime(0);
   if (!EXP) setInterval(fit, 1500);    // страхівка від зміни висоти (адресна панель на телефоні)
