@@ -249,7 +249,7 @@ function load() {
     if (!Array.isArray(d.items)) d.items = [];
     if (!Array.isArray(d.tracks) || !d.tracks.length) d.tracks = [{ id: "v1", name: "Сцена" }];
     d.meta = Object.assign(newDoc().meta, d.meta || {});
-    return d;
+    return d;                                        // санітизація — у boot(), коли REG уже є
   } catch (e) { return null; }
 }
 
@@ -270,6 +270,58 @@ function seeded(str) {
   for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
   let s = h >>> 0;
   return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+}
+
+/* ---- санітизація: усе, що приходить з JSON, не має потрапляти в HTML як є ---- */
+const safeId = v => {
+  const s = String(v == null ? "" : v).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 24);
+  return s || ("i" + Math.random().toString(36).slice(2, 8));
+};
+const safeColor = (v, def) => (typeof v === "string" && /^#[0-9a-fA-F]{3,8}$/.test(v.trim())) ? v.trim() : def;
+const safeEnum = (v, list, def) => list.includes(v) ? v : def;
+function safeNum(v, def, range) {
+  const n = typeof v === "number" ? v : parseFloat(v);
+  if (!Number.isFinite(n)) return def;
+  return range ? Math.min(range[1], Math.max(range[0], n)) : n;
+}
+const NUM_RANGE = { x: [0, 100], y: [0, 100], w: [1, 300], h: [1, 300], alpha: [0, 1], speed: [.2, 4],
+  rot: [-180, 180], blur: [0, 40], count: [0, 300], bar: [1, 60], size: [4, 300],
+  weight: [100, 900], spacing: [-.1, .5], start: [0, 3600], dur: [.1, 3600], anim: [.1, 3600],
+  anchor: [0, 3600], shadow: [0, 120] };
+
+/* Приводить сирий об'єкт до безпечного вигляду за схемою пресета.
+   Повертає null для невідомого типу. */
+function normItem(raw, defTrack) {
+  if (!raw || typeof raw !== "object") return null;
+  const p = REG[raw.type];
+  if (!p) return null;
+  const d = p.def || {};
+  const it = Object.assign({}, d, raw);
+  it.type = raw.type;
+  it.id = safeId(raw.id);
+  it.track = String(raw.track || defTrack || "v1").slice(0, 32);
+  for (const k in NUM_RANGE) {
+    if (k in it || k in d) it[k] = safeNum(it[k], d[k] != null ? d[k] : (NUM_RANGE[k][0] <= 0 ? 0 : 1), NUM_RANGE[k]);
+  }
+  if ("color" in d) it.color = safeColor(it.color, d.color || "#ffffff");
+  if ("color2" in d) it.color2 = safeColor(it.color2, d.color2 || it.color);
+  if ("text" in d) it.text = String(it.text == null ? "" : it.text).slice(0, 400);
+  if ("align" in d) it.align = safeEnum(it.align, ["center", "left", "right"], d.align || "center");
+  if ("shape" in d) it.shape = safeEnum(it.shape, ["latin", "orthodox"], d.shape || "latin");
+  if ("dir" in d) it.dir = (+it.dir < 0) ? -1 : 1;
+  if ("weight" in d) it.weight = [200, 300, 400, 600, 800].includes(+it.weight) ? +it.weight : (d.weight || 300);
+  return it;
+}
+function sanitizeDoc(d) {
+  const out = [];
+  const t0 = (d.tracks && d.tracks[0] && d.tracks[0].id) || "v1";
+  let dropped = 0;
+  for (const raw of (Array.isArray(d.items) ? d.items : []).slice(0, 400)) {
+    const it = normItem(raw, t0);
+    if (it) out.push(it); else dropped++;
+  }
+  d.items = out;
+  return dropped;
 }
 function hexA(hex, a) {
   const h = String(hex || "#ffffff").replace("#", "");
@@ -592,6 +644,7 @@ reg("grain", {
 
 /* ============================================================ STAGE ===== */
 function buildItem(it) {
+  it = normItem(it, doc.tracks[0] && doc.tracks[0].id) || it;   // у DOM тільки санітизовані значення
   const p = REG[it.type];
   if (!p) throw new Error("невідомий тип " + it.type);
   const el = document.createElement("div");
@@ -704,6 +757,7 @@ function mut(fn, undo = true) {
 function applySnap(s) {
   const d = JSON.parse(s);
   doc.meta = d.meta; doc.tracks = d.tracks; doc.items = d.items;
+  sanitizeDoc(doc);
   for (const id of [...nodes.keys()]) unmount(id);
   if (sel && !doc.items.some(i => i.id === sel)) sel = null;
   save(); syncStage(); renderTimeline(); paintInspector();
@@ -745,7 +799,7 @@ function renderTimeline() {
   $("#ruler").innerHTML = rh;
   $("#track").innerHTML = doc.items.map(it => {
     const p = REG[it.type];
-    return `<div class="clip ${it.id === sel ? "sel" : ""}" data-id="${it.id}"
+    return `<div class="clip ${it.id === sel ? "sel" : ""}" data-id="${esc(it.id)}"
       style="left:${it.start * dpps}px;width:${Math.max(18, it.dur * dpps)}px">
       <div class="nm">${esc(p ? p.name : it.type)}</div>
       <div class="du">${it.dur.toFixed(1)}с</div>
@@ -860,7 +914,8 @@ function fmtVal(k, v) {
   return String(Math.round(v * 10) / 10);
 }
 function field(it, k) {
-  const v = it[k];
+  const bad = it[k] === undefined || it[k] === null || (typeof it[k] === "number" && !Number.isFinite(it[k]));
+  const v = bad ? 0 : it[k];
   if (k === "text") return `<div class="fld"><label>${LABEL[k]}</label><input type="text" data-k="text" value="${esc(v)}"></div>`;
   if (k === "color" || k === "color2") return `<div class="fld"><label>${LABEL[k]}</label><input type="color" data-k="${k}" value="${esc(v)}"></div>`;
   if (k === "weight") return `<div class="fld"><label>${LABEL[k]}</label><select data-k="weight">${
@@ -954,10 +1009,10 @@ $("#libGrid").addEventListener("click", e => {
 });
 function addItem(type) {
   const p = REG[type];
-  const it = Object.assign({}, p.def, {
+  const it = normItem(Object.assign({}, p.def, {
     id: uid(), type, track: doc.tracks[0].id, start: Math.round(playhead * 10) / 10,
     dur: p.def.dur || 4, anim: p.def.dur || 4, anchor: 0
-  });
+  }));
   mut(() => { doc.items.push(it); extend(it.start + it.dur); });
   sel = it.id; paintInspector(); renderTimeline(); applyTime(playhead);
   toast("додано: " + p.name);
@@ -1030,10 +1085,11 @@ $("#impJson").onchange = e => {
       doc.meta = Object.assign(newDoc().meta, d.meta || {});
       doc.items = d.items;
       doc.tracks = d.tracks || [{ id: "v1", name: "Сцена" }];
+      const dropped = sanitizeDoc(doc);
       sel = null; for (const id of [...nodes.keys()]) unmount(id);
       $("#title").value = doc.meta.title; $("#projModal").classList.remove("on");
       save(); syncStage(); renderTimeline(); paintInspector(); fit();
-      toast("проєкт відкрито");
+      toast(dropped ? "проєкт відкрито (пропущено " + dropped + ")" : "проєкт відкрито");
     } catch (err) { toast("поганий JSON"); }
   };
   fr.readAsText(f);
@@ -1111,7 +1167,7 @@ document.addEventListener("keydown", e => {
   const tag = (e.target.tagName || "").toLowerCase();
   if (tag === "input" || tag === "textarea" || tag === "select") return;
   if (e.code === "Space") { e.preventDefault(); playing ? stop() : play(); }
-  else if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); $("#delBtn").click(); }
+  else if (e.key === "Delete") { e.preventDefault(); $("#delBtn").click(); }
   else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
   else if (e.key === "ArrowRight") { stop(); seek(playhead + (e.shiftKey ? 1 : .1)); }
   else if (e.key === "ArrowLeft") { stop(); seek(playhead - (e.shiftKey ? 1 : .1)); }
@@ -1120,6 +1176,7 @@ window.addEventListener("resize", () => { if (!EXP) fit(); });
 
 /* ============================================================ INIT ====== */
 function boot() {
+  sanitizeDoc(doc);                         // тут REG уже визначений
   $("#title").value = doc.meta.title;
   fit(); syncStage(); renderTimeline(); applyTime(0);
   if (!EXP) setInterval(fit, 1500);    // страхівка від зміни висоти (адресна панель на телефоні)
@@ -1128,11 +1185,13 @@ boot();
 
 window.FLOW = {
   doc, REG, applyTime, seek, addItem, play, stop, mount, unmount,
+  normItem, sanitizeDoc,                                         // для QA/тестів
   setTime(t) { stop(); applyTime(t); },
   loadDoc(d) {
     doc.meta = Object.assign(newDoc().meta, d.meta || {});
     doc.items = (d.items || []).map(it => Object.assign({}, it));
     doc.tracks = d.tracks || [{ id: "v1", name: "Сцена" }];
+    try { sanitizeDoc(doc); } catch (e) {}
     sel = null;
     for (const id of [...nodes.keys()]) unmount(id);
     $("#title").value = doc.meta.title;
